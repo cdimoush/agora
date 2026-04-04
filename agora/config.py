@@ -21,6 +21,7 @@ class Config:
     token_env: str
 
     name: str = ""
+    telemetry: bool = False
     channels: dict[str, str] = field(default_factory=dict)
 
     exchange_cap: int = 5

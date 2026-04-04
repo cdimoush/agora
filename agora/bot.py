@@ -16,7 +16,7 @@ from agora.chunker import chunk_message
 from agora.config import Config
 from agora.message import Message
 from agora.safety import ExchangeCapChecker
-from agora.telemetry import Span, _NullSpan, _null_span, _trace_ctx
+from agora.telemetry import LogProcessor, Span, _NullSpan, _null_span, _trace_ctx
 
 logger = logging.getLogger("agora")
 
@@ -39,6 +39,9 @@ class AgoraBot:
         self._channel_map: dict[str, str] = {}
         self._channel_ids: dict[str, int] = {}
         self._processors: list = []
+
+        if config.telemetry:
+            self._setup_telemetry()
 
         # discord.py matches events by function __name__
         @self._client.event
@@ -281,6 +284,27 @@ class AgoraBot:
         if not self.config.channels:
             return "mention-only"
         return self._channel_map.get(channel_name)
+
+    def _setup_telemetry(self) -> None:
+        """Auto-register a file-writing LogProcessor when telemetry is enabled."""
+        from pathlib import Path
+
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+
+        bot_name = self.config.name or self.config.token_env
+        log_file = log_dir / f"{bot_name}.jsonl"
+
+        tel_logger = logging.getLogger(f"agora.telemetry.{bot_name}")
+        tel_logger.setLevel(logging.INFO)
+        tel_logger.propagate = False  # don't duplicate to root logger
+
+        handler = logging.FileHandler(log_file, mode="a")
+        handler.setFormatter(logging.Formatter("%(message)s"))  # raw JSONL
+        tel_logger.addHandler(handler)
+
+        self.add_processor(LogProcessor(logger_name=f"agora.telemetry.{bot_name}"))
+        logger.info("Telemetry enabled → %s", log_file)
 
     def _check_intents(self) -> None:
         self._intent_warned = False

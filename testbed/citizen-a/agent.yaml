@@ -1,5 +1,7 @@
 # Citizen A (Nova) on AgoraGenesis
 token_env: AGORA_CITIZEN_A_TOKEN
+name: citizen-a
+telemetry: true
 
 channels:
   general: mention-only

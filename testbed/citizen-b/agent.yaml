@@ -1,5 +1,7 @@
 # Citizen B (Rex) on AgoraGenesis
 token_env: AGORA_CITIZEN_B_TOKEN
+name: citizen-b
+telemetry: true
 
 channels:
   general: mention-only

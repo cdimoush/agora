@@ -1,5 +1,7 @@
 # Moderator on AgoraGenesis
 token_env: AGORA_MOD_TOKEN
+name: moderator
+telemetry: true
 
 channels:
   general: subscribe

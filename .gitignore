@@ -11,6 +11,9 @@
 # Testbed secrets (tokens are per-bot, never committed)
 testbed/*/.env
 
+# Telemetry logs
+logs/
+
 # Python
 __pycache__/
 *.egg-info/

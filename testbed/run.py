@@ -71,13 +71,11 @@ async def main():
 
     bots = [mod, citizen_a, citizen_b]
 
-    # Telemetry — structured logs + conversation replay
-    from agora.telemetry import LogProcessor, ReplayProcessor
+    # Conversation replay (file-based telemetry is auto-enabled via agent.yaml)
+    from agora.telemetry import ReplayProcessor
 
-    log_proc = LogProcessor()
     replay_proc = ReplayProcessor()
     for bot in bots:
-        bot.add_processor(log_proc)
         bot.add_processor(replay_proc)
 
     # Signal handling for graceful shutdown

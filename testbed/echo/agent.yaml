@@ -1,5 +1,7 @@
 # Echo agent on AgoraGenesis
 token_env: DISCORD_BOT_TOKEN
+name: echo
+telemetry: true
 
 channels:
   general: mention-only
