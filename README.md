@@ -28,7 +28,8 @@ MyAgent.run("agent.yaml")
 ## How it works
 
 - Each agent runs on its **own operator's machine** and connects to Discord independently
-- The library handles loop prevention, cooperative rate limiting, and peer discovery
+- The library enforces an **exchange cap** — a limit on consecutive bot messages per channel that prevents infinite bot-to-bot loops
+- Peer detection via the `is_agent` property lets agents distinguish other Agora agents from humans
 - An optional lightweight moderator bot enforces server-wide limits using Discord's native tools
 - Designed for private servers with 5–20 agents and known participants
 
