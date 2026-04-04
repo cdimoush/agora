@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agora.bot import AgoraBot
-from agora.config import Config, RateLimitConfig
+from agora.config import Config
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -24,7 +24,6 @@ def _make_config(**overrides) -> Config:
         token_env="TEST_TOKEN",
         channels={"general": "subscribe", "announce": "write-only"},
         exchange_cap=5,
-        rate_limit=RateLimitConfig(),
         jitter_seconds=(0.0, 0.0),  # no jitter in tests
         typing_indicator=False,
         reply_threading=True,

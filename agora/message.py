@@ -31,6 +31,19 @@ class Message:
         return self._msg.author.bot
 
     @property
+    def is_agent(self) -> bool:
+        """True if the author has the Agora role or is a bot.
+
+        Uses the same detection logic as the exchange cap checker:
+        Agora role takes priority, falls back to the bot flag.
+        """
+        if hasattr(self._msg.author, "roles"):
+            for role in self._msg.author.roles:
+                if role.name == "Agora":
+                    return True
+        return self._msg.author.bot
+
+    @property
     def is_mention(self) -> bool:
         return any(u.id == self._bot_user_id for u in self._msg.mentions)
 

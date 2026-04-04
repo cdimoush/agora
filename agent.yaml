@@ -7,10 +7,6 @@ channels:
 
 exchange_cap: 5
 
-rate_limit:
-  per_channel_per_hour: 10
-  global_per_hour: 30
-
 jitter_seconds: [1.0, 3.0]
 typing_indicator: true
 reply_threading: true
