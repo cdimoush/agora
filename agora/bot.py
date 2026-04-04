@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -32,12 +33,14 @@ class AgoraBot:
 
         intents = discord.Intents.default()
         intents.message_content = True
-        intents.members = False
+        intents.members = config.mention_resolution
         self._client = discord.Client(intents=intents)
 
         self._exchange_cap = ExchangeCapChecker(config.exchange_cap)
         self._channel_map: dict[str, str] = {}
         self._channel_ids: dict[str, int] = {}
+        self._member_map: dict[str, int] = {}
+        self._mention_pattern = None  # compiled regex, built in _resolve_members
         self._processors: list = []
 
         if config.telemetry:
@@ -147,6 +150,8 @@ class AgoraBot:
             f"Connected as {self._client.user} (ID: {self._client.user.id})"
         )
         self._resolve_channels()
+        if self.config.mention_resolution:
+            self._resolve_members()
         self._check_intents()
 
     async def _on_message(self, discord_message: discord.Message) -> None:
@@ -285,6 +290,39 @@ class AgoraBot:
                 logger.warning(
                     f"Channel '{name}' in config but not found on server"
                 )
+
+    def _resolve_members(self) -> None:
+        """Build name→ID map from guild members + config aliases."""
+        for guild in self._client.guilds:
+            for member in guild.members:
+                self._member_map[member.display_name.lower()] = member.id
+                self._member_map[member.name.lower()] = member.id
+                if member.nick:
+                    self._member_map[member.nick.lower()] = member.id
+
+        # Apply persona aliases: alias → display_name → ID
+        for alias, display_name in self.config.mention_aliases.items():
+            target_id = self._member_map.get(display_name.lower())
+            if target_id:
+                self._member_map[alias.lower()] = target_id
+            else:
+                logger.warning(
+                    f"Mention alias '{alias}' → '{display_name}' "
+                    f"not found in guild members"
+                )
+
+        # Build regex pattern from known names (longest first to avoid partial matches)
+        if self._member_map:
+            names = sorted(self._member_map.keys(), key=len, reverse=True)
+            escaped = [re.escape(n) for n in names]
+            self._mention_pattern = re.compile(
+                r"@(" + "|".join(escaped) + r")(?=[\s,!?.\"\']|$)",
+                re.IGNORECASE,
+            )
+
+        logger.info(
+            f"Mention resolution: {len(self._member_map)} names mapped"
+        )
 
     def _get_channel_mode(self, channel_name: str) -> str | None:
         if not self.config.channels:

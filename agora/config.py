@@ -26,6 +26,9 @@ class Config:
     respond_mode: str = "mention-only"
     channels: dict[str, str] = field(default_factory=dict)
 
+    mention_resolution: bool = False
+    mention_aliases: dict[str, str] = field(default_factory=dict)
+
     exchange_cap: int = 5
 
     jitter_seconds: tuple[float, float] = (1.0, 3.0)
