@@ -1,6 +1,6 @@
 
-# Beads (internal filtering handled by .beads/.gitignore)
-.beads/embeddeddolt/
+# Beads
+.beads/
 .dolt/
 .beads-credential-key
 
