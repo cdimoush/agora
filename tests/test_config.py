@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agora.config import Config, ConfigError, RateLimitConfig
+from agora.config import Config, ConfigError
 
 
 @pytest.fixture()
@@ -52,9 +52,9 @@ class TestConfigFromYaml:
         assert cfg.typing_indicator is True
         assert cfg.reply_threading is True
         assert cfg.max_response_length == 4000
-        assert cfg.rate_limit == RateLimitConfig()
 
-    def test_rate_limit_loaded(self, tmp_yaml):
+    def test_rate_limit_silently_ignored(self, tmp_yaml):
+        """Old configs with rate_limit should still load without error."""
         path = tmp_yaml("""\
             token_env: MY_TOKEN
             rate_limit:
@@ -62,8 +62,8 @@ class TestConfigFromYaml:
               global_per_hour: 60
         """)
         cfg = Config.from_yaml(path)
-        assert cfg.rate_limit.per_channel_per_hour == 20
-        assert cfg.rate_limit.global_per_hour == 60
+        assert cfg.token_env == "MY_TOKEN"
+        assert not hasattr(cfg, "rate_limit")
 
     def test_missing_token_env_raises(self, tmp_yaml):
         path = tmp_yaml("channels: {}\n")

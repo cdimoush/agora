@@ -17,19 +17,12 @@ _VALID_CHANNEL_MODES = {"subscribe", "mention-only", "write-only"}
 
 
 @dataclass
-class RateLimitConfig:
-    per_channel_per_hour: int = 10
-    global_per_hour: int = 30
-
-
-@dataclass
 class Config:
     token_env: str
 
     channels: dict[str, str] = field(default_factory=dict)
 
     exchange_cap: int = 5
-    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
     jitter_seconds: tuple[float, float] = (1.0, 3.0)
     typing_indicator: bool = True
@@ -48,9 +41,8 @@ class Config:
         if "token_env" not in raw:
             raise ConfigError("token_env is required")
 
-        # Build rate_limit
-        rate_raw = raw.pop("rate_limit", {})
-        rate_limit = RateLimitConfig(**rate_raw) if rate_raw else RateLimitConfig()
+        # Silently consume rate_limit for backward compatibility
+        raw.pop("rate_limit", None)
 
         # Normalise jitter_seconds from list to tuple
         jitter = raw.pop("jitter_seconds", None)
@@ -65,7 +57,7 @@ class Config:
                 raise ConfigError("jitter_seconds min must be <= max")
             raw["jitter_seconds"] = jitter
 
-        config = cls(rate_limit=rate_limit, **raw)
+        config = cls(**raw)
         config._validate()
         return config
 

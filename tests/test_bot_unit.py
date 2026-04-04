@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agora.bot import AgoraBot
-from agora.config import Config, RateLimitConfig
+from agora.config import Config
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -19,12 +19,27 @@ from agora.config import Config, RateLimitConfig
 BOT_USER_ID = 1000
 
 
+def _history_messages(messages):
+    """Return an async iterator factory suitable for channel.history mock."""
+
+    async def _history(limit=None):
+        for msg in messages[:limit]:
+            yield msg
+
+    return _history
+
+
+def _make_history_msg(*, bot=False):
+    """Create a minimal message for channel history mocking."""
+    author = SimpleNamespace(bot=bot, display_name="Bot" if bot else "Human")
+    return SimpleNamespace(author=author)
+
+
 def _make_config(**overrides) -> Config:
     defaults = dict(
         token_env="TEST_TOKEN",
         channels={"general": "subscribe", "announce": "write-only"},
         exchange_cap=5,
-        rate_limit=RateLimitConfig(),
         jitter_seconds=(0.0, 0.0),  # no jitter in tests
         typing_indicator=False,
         reply_threading=True,
@@ -49,6 +64,8 @@ def _make_discord_msg(
     channel.id = 500
     channel.send = AsyncMock()
     channel.typing = MagicMock(return_value=AsyncMock())
+    # Default empty history for exchange cap checker
+    channel.history = _history_messages([])
 
     msg = AsyncMock()
     msg.author = author
@@ -308,6 +325,80 @@ class TestExceptionHandling:
         # Should not raise
         await bot._on_message(msg)
         msg.reply.assert_not_called()
+
+
+class TestExchangeCapPipeline:
+    @pytest.mark.asyncio
+    async def test_exchange_cap_suppresses_response(self):
+        """When cap is reached, should_respond is never called."""
+        bot = _make_bot(exchange_cap=3)
+        sr_called = []
+
+        async def sr(m):
+            sr_called.append(True)
+            return True
+
+        bot.should_respond = sr
+
+        # 3 consecutive bot messages → cap reached
+        history = [_make_history_msg(bot=True) for _ in range(3)]
+        msg = _make_discord_msg(channel_name="general")
+        msg.channel.history = _history_messages(history)
+
+        await bot._on_message(msg)
+        assert sr_called == []
+        msg.reply.assert_not_called()
+        msg.channel.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exchange_cap_allows_when_not_reached(self):
+        """When under cap, pipeline continues to should_respond."""
+        bot = _make_bot(exchange_cap=5)
+        sr_called = []
+
+        async def sr(m):
+            sr_called.append(True)
+            return False
+
+        bot.should_respond = sr
+
+        # 2 bot then 1 human → only 2 consecutive, under cap of 5
+        history = [
+            _make_history_msg(bot=True),
+            _make_history_msg(bot=True),
+            _make_history_msg(bot=False),
+        ]
+        msg = _make_discord_msg(channel_name="general")
+        msg.channel.history = _history_messages(history)
+
+        await bot._on_message(msg)
+        assert sr_called == [True]
+
+    @pytest.mark.asyncio
+    async def test_exchange_cap_allows_after_human_message(self):
+        """Human message resets counter — only recent consecutive bots count."""
+        bot = _make_bot(exchange_cap=3)
+        sr_called = []
+
+        async def sr(m):
+            sr_called.append(True)
+            return False
+
+        bot.should_respond = sr
+
+        # 1 bot, 1 human, 3 bot (most recent first) → only 1 consecutive
+        history = [
+            _make_history_msg(bot=True),
+            _make_history_msg(bot=False),
+            _make_history_msg(bot=True),
+            _make_history_msg(bot=True),
+            _make_history_msg(bot=True),
+        ]
+        msg = _make_discord_msg(channel_name="general")
+        msg.channel.history = _history_messages(history)
+
+        await bot._on_message(msg)
+        assert sr_called == [True]
 
 
 class TestFromConfig:

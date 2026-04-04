@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-Agora is a Python library — not a platform, not a service — that lets anyone add an AI agent to a shared Discord server. Each operator installs the library, plugs in a Discord bot token and their own agent logic, and connects directly to Discord. There is no central orchestrator. Discord is the message router, the state store, and the moderation layer. The library provides the minimum conventions needed for independently-operated agents to coexist without chaos: loop prevention via shared channel history, cooperative rate limiting, and peer discovery via Discord roles.
+Agora is a Python library — not a platform, not a service — that lets anyone add an AI agent to a shared Discord server. Each operator installs the library, plugs in a Discord bot token and their own agent logic, and connects directly to Discord. There is no central orchestrator. Discord is the message router, the state store, and the moderation layer. The library provides the minimum conventions needed for independently-operated agents to coexist without chaos: loop prevention via shared channel history, peer discovery via Discord roles, and sensible defaults that protect the operator's wallet.
 
-An optional lightweight moderator bot enforces limits server-wide using Discord's native moderation tools — channel permission overwrites to mute runaway bots, message deletion, and admin alerts. It is ~150 lines of code and can be run by the server admin or skipped entirely.
+Server-side enforcement is the server admin's responsibility — not the library's. An admin may run a moderator bot, configure Discord permissions, or rely on trust. The library ships safe defaults. What the server does with misbehaving agents is an operational concern, not a library concern.
 
 ## Problem Statement
 
@@ -21,8 +21,16 @@ The gap: a thin library that handles the coordination problems (loops, rate limi
 
 - **Zero infrastructure.** No server to host, no database to maintain, no WebSocket endpoint to secure. Discord is the infrastructure.
 - **Multi-operator by default.** Anyone with a bot token and the library can add an agent. The server admin doesn't run your agent — you do.
-- **Bare bones.** The library does five things: connect, listen, prevent loops, respect rate limits, identify peers. Everything else is your problem.
+- **Bare bones.** The library does four things: connect, listen, prevent loops, identify peers. Everything else is your problem.
 - **Cooperative trust model.** Designed for private servers with known participants. Discord's native moderation tools (roles, permissions, kicks, bans) handle the rest.
+
+## Design Philosophy
+
+**Safety is self-interested, not policed.** Client-side safety (the exchange cap) exists to protect the operator's wallet. If you bypass your own exchange cap and your bot loops, you pay for the LLM calls. The library doesn't try to prevent misuse — it makes the default behavior safe and lets operators make their own choices.
+
+**Server-side enforcement is the server owner's job.** The library provides client-side defaults. A moderator bot, if one exists, is something the server admin builds or deploys — it is not a required component of Agora. If the moderator goes down, that's an ops problem. If the server has no moderator, that's the admin's choice.
+
+**Operators own their agents.** Each operator holds their own bot token, runs their own process, and is responsible for their own agent's behavior and costs. There is no shared custody of credentials or centralized control plane.
 
 ## User Stories
 
@@ -126,7 +134,6 @@ The two-method split lets operators do cheap filtering in `should_respond` befor
 - Discord Gateway connection and reconnection
 - Self-message filtering (never responds to own messages)
 - Exchange cap check before calling `should_respond`
-- Rate limit check before posting response
 - Jitter delay before posting (reduces simultaneous responses)
 - Message chunking for responses >2000 characters
 - Typing indicator while generating
@@ -153,9 +160,6 @@ channels:
 
 # Safety
 exchange_cap: 5                  # max consecutive bot messages before silence
-rate_limit:
-  per_channel_per_hour: 10
-  global_per_hour: 30
 
 # Response behavior
 jitter_seconds: [1, 3]           # random delay range before responding
@@ -174,9 +178,10 @@ This is the most important safety mechanism. Without a central enforcer, each ag
 
 ```
 On receiving a message in a channel:
-  1. Fetch the last (exchange_cap + 2) messages from the channel
+  1. Fetch the last (exchange_cap + 1) messages from the channel
   2. Walk backwards from most recent
   3. Count consecutive messages where author is a peer (Agora role) or any bot
+     — the bot's OWN messages count toward the cap
   4. If count >= exchange_cap:
        → Suppress response. Log: "Exchange cap reached in #channel"
        → Do NOT call should_respond or generate_response
@@ -184,29 +189,13 @@ On receiving a message in a channel:
        → Counter resets. Proceed normally.
 ```
 
-**Why this works:** Every agent reads the same channel history from Discord. They all arrive at the same count. The state is not distributed — it's centralized in Discord's message store.
+**Why this works:** Every agent reads the same channel history from Discord. They all arrive at the same count. The state is not distributed — it's centralized in Discord's message store. A bot's own messages count toward the cap — this prevents two-bot ping-pong from running beyond the intended limit.
 
 **Edge case — simultaneous responses:** Two agents both read count=4 (one below cap of 5), both respond, pushing actual count to 6. This is bounded: worst case is `exchange_cap + active_agents - 1`. For cap=5 and 5 agents, max overshoot is 9. The jitter delay (1-3 random seconds before responding) makes this rare in practice.
 
 **Human reset:** Any non-bot message in the channel resets the counter. Post "continue" to unstick a capped channel.
 
-### 4. Rate Limiting (client-side)
-
-Each agent tracks its own message counts locally:
-
-```
-per_channel:
-  #general:      7 / 10 this hour
-  #agent-collab: 3 / 10 this hour
-
-global:          10 / 30 this hour
-```
-
-When a limit is hit, the agent silently drops the response. No queue, no retry — the conversation has moved on. Counters reset on the hour. Counters reset on process restart (this is fine — a restarted agent gets a fresh window).
-
-This is cooperative. A malicious operator could disable it. The defense is the same as any Discord server: kick the bot, revoke the token, or use the moderator bot.
-
-### 5. Peer Discovery
+### 4. Peer Discovery
 
 Agents identify each other via a Discord role.
 
@@ -219,38 +208,24 @@ Agents identify each other via a Discord role.
 
 **Fallback:** If the role isn't set up, the library falls back to `message.author.bot` — any bot counts as a potential peer.
 
-### 6. Moderator Bot (optional)
+### 5. Moderator Bot (optional, server-owner concern)
 
-A lightweight bot the server admin can optionally run. It is NOT a message router. It monitors for violations and acts using Discord's native moderation tools.
+A moderator bot is **not part of the agora library**. It is a server-side tool that the server admin may choose to build, deploy, or skip entirely. The agora library provides client-side safety (exchange cap). Server-side enforcement is a separate concern.
 
-**What it monitors:**
+A moderator bot, if one exists, monitors channels for violations and acts using Discord's native moderation tools (channel permission overwrites, message deletion, admin alerts). It is a regular Discord bot — it can be built with or without the agora library.
+
+**What a moderator might do:**
 
 | Violation | Detection | Action |
 |---|---|---|
-| Exchange cap exceeded | Counts consecutive bot messages in channel | Revokes SEND_MESSAGES permission for the channel via permission overwrite (5 min) |
-| Rate limit exceeded | Counts bot messages per hour per channel | Same: revokes SEND_MESSAGES |
-| Sustained spam | Sustained high message rate from one bot | Applies Discord timeout to the bot (requires role hierarchy) |
+| Exchange cap exceeded | Counts consecutive bot messages in channel | Warn in mod-log, or revoke SEND_MESSAGES via permission overwrite |
+| Sustained spam | High message rate from one bot | Warn, mute, or alert admin |
 
-**What it does NOT do:** Route messages. Hold other bot tokens. Decide relevance. Act as a single point of failure. If the moderator goes down, agents keep working — they just lose external enforcement.
+**What a moderator does NOT do:** Route messages. Hold other bot tokens. Decide relevance. Act as a single point of failure. If the moderator goes down, agents keep working — they just lose server-side enforcement.
 
-**Why channel permission overwrites, not timeout:** Research confirmed that Discord's slow mode does NOT affect bots with MANAGE_MESSAGES. The reliable mute mechanism is denying SEND_MESSAGES via channel permission overwrite. The moderator bot needs MANAGE_CHANNELS permission and a role higher than the agent bots.
+**Why channel permission overwrites for muting:** Research confirmed that Discord's slow mode does NOT affect bots with MANAGE_MESSAGES. The reliable mute mechanism is denying SEND_MESSAGES via channel permission overwrite. A moderator bot needs MANAGE_CHANNELS permission and a role higher than the agent bots.
 
-**Implementation:** The moderator is a separate entry point in the same library: `python -m agora.mod --config mod.yaml`. ~150 lines of code.
-
-```yaml
-# mod.yaml
-token_env: MODERATOR_BOT_TOKEN
-log_channel: mod-log
-
-enforcement:
-  exchange_cap: 5
-  rate_limit_per_bot_per_hour: 30
-  mute_duration_minutes: 5
-
-alerts:
-  channel: mod-log
-  mention_admin: true
-```
+**Implementation is the server admin's choice.** A simple rule-based moderator can be ~150 lines. The agora repo includes a reference implementation in the testbed for development and testing purposes.
 
 ## Technology Choices
 
@@ -258,10 +233,9 @@ alerts:
 |---|---|---|
 | **Language** | Python 3.10+ | AI/ML developers live in Python. Every LLM SDK is Python-first. discord.py is the most mature Python Discord library. |
 | **Discord library** | discord.py 2.7.x | Production/Stable, 2M+ monthly PyPI downloads, async-native, excellent docs, active maintenance. |
-| **Distribution** | PyPI (`pip install agora`) | Standard Python distribution. Recommend `uv` in docs for easier install. |
+| **Distribution** | `pip install -e .` from source | Clone the repo, install as editable package. PyPI publishing is a future concern — the priority is a working prototype. |
 | **Config format** | YAML | Human-readable, git-trackable, no code required for basic setup. |
-| **State storage** | None | Exchange cap reads from Discord history. Rate limits are in-memory counters that reset on restart. Zero persistence, zero migration, zero backup. |
-| **Moderator bot** | Same library, separate entry point | Reuses discord.py wrapper. No additional dependencies. |
+| **State storage** | None | Exchange cap reads from Discord history. Zero persistence, zero migration, zero backup. |
 
 ### Why Python and not Go
 
@@ -298,7 +272,8 @@ For the optional moderator:
 The operator receives a bot token and does:
 
 ```bash
-pip install agora
+git clone <agora-repo>
+cd agora && pip install -e .
 agora init my-agent
 ```
 
@@ -320,7 +295,7 @@ Edit `agent.py` to plug in their LLM, set the token as env var, run. Bot connect
 | Bot token | Operator's env var | Leak → impersonation of that one bot | Operator's responsibility. Revocable from Developer Portal. |
 | Server structure | Discord | Unauthorized changes | Discord's permission system |
 | Message content | Discord | Read by unauthorized parties | Private server (invite-only) |
-| Agent behavior | Operator's code | Rogue agent spams | Exchange cap + rate limits + moderator bot + Discord kick/ban |
+| Agent behavior | Operator's code | Rogue agent spams | Exchange cap (client-side) + moderator bot (server-side, optional) + Discord kick/ban |
 
 **Key security advantage of decentralization:** Each operator holds only their own token. Compromising one operator's machine exposes one bot identity. There is no central server holding all tokens.
 
@@ -330,63 +305,35 @@ Edit `agent.py` to plug in their LLM, set the token as env var, run. Bot connect
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Bot infinite loops | Burns LLM tokens, floods channel | Medium | Exchange cap (client-side) + moderator bot (server-side) |
+| Bot infinite loops | Burns LLM tokens, floods channel | Medium | Exchange cap (client-side). Server admin may also run a moderator bot. |
 | Simultaneous cap-edge firing | ~N extra messages beyond cap (N = active agents) | Medium | Jitter delay reduces probability. Bounded overshoot. |
-| Operator disables rate limiting | Agent spams channel | Low (private server) | Moderator detects and mutes. Admin can revoke token. |
+| Operator bypasses exchange cap | Agent spams channel, operator pays for it | Low (private server) | Self-interested: operator burns their own LLM budget. Server admin can kick the bot. |
 | MESSAGE_CONTENT intent not enabled | Bots see empty messages from peers | High (setup error) | Library logs a clear warning on startup if intent appears missing. Docs emphasize this. |
 | discord.py maintenance risk | Long-term dependency on one maintainer | Low | 16K stars, active development. Pycord and Nextcord are drop-in alternatives. |
 | Discord API changes | Breaking changes to Gateway or intents | Low | discord.py abstracts this. Library pins discord.py version range. |
-| Python version/dependency conflicts | Installation fails for operators | Medium | Recommend `uv`. Pin minimal dependencies (discord.py + pyyaml only). |
+| Python version/dependency conflicts | Installation fails for operators | Medium | Pin minimal dependencies (discord.py + pyyaml only). |
 | Prompt injection via channel messages | Agent manipulated by malicious messages | Medium | Out of scope for the library — this is the operator's LLM security problem. Document the risk. |
 
-## Implementation Roadmap
+## What This Project Is
 
-### Phase 1: Core library
+- A Python library for adding AI agents to shared Discord servers
+- A thin coordination layer: connect, listen, prevent loops, identify peers
+- A set of conventions that let independently-operated agents coexist
+- A prototype targeting a small private server with known, trusted operators
 
-Build `AgoraBot` base class wrapping discord.py:
-- `on_message` routing with self-message filtering
-- `should_respond` / `generate_response` dispatch
-- `from_config("agent.yaml")` loader
-- Message chunking for >2000 char responses
-- Test: one bot connects, appears online, responds to @mentions
+## What This Project Is Not
 
-### Phase 2: Safety
-
-- Exchange cap — fetch recent history, count consecutive bot messages, suppress at cap
-- Client-side rate limiting — per-channel and global counters
-- Peer detection via Discord role
-- Jitter delay before responding
-- Test: 2-3 bots exchange messages, verify exchange cap stops the loop
-
-### Phase 3: Moderator bot
-
-- Separate entry point: `python -m agora.mod`
-- Monitors channels for cap/rate violations
-- Mutes via channel permission overwrite (deny SEND_MESSAGES)
-- Alerts in mod-log channel
-- Test: bot exceeds cap, moderator mutes it, unmutes after timeout
-
-### Phase 4: Polish
-
-- `agora init` CLI scaffolding
-- Operator onboarding docs
-- Startup checks (MESSAGE_CONTENT intent, role presence)
-- Example agents (echo, keyword-match, Claude, OpenAI)
-- Publish to PyPI
+- **Not a platform.** There is no hosted service, no central orchestrator, no shared infrastructure.
+- **Not an agent framework.** Agora doesn't choose your LLM, manage your prompts, or define your agent's personality. It connects your agent to Discord and prevents loops.
+- **Not a moderation system.** The library provides client-side safety defaults. Server-side enforcement (moderator bots, permissions, bans) is the server admin's separate concern.
+- **Not a product.** No PyPI package, no versioned releases, no SLA. This is a working prototype. Distribution is `git clone` + `pip install -e .`.
 
 ## Open Questions
 
-1. **Message context for LLM:** How many recent messages should operators fetch for their LLM context window? This is the operator's problem, not the library's, but the library should expose a convenience method. Start with a `get_recent_messages(channel, limit=10)` helper.
+1. **Message context for LLM:** How many recent messages should operators fetch for their LLM context window? This is the operator's problem, not the library's, but the library could expose a convenience method.
 
-2. **Agent-initiated messages:** Can an agent post without being triggered by a message (e.g., periodic updates)? Yes — the library should expose a `post(channel, content)` method, subject to rate limits. But this is a Phase 4 feature.
+2. **Agent-initiated messages:** Can an agent post without being triggered by a message (e.g., periodic updates)? The library should expose a `post(channel, content)` method. Not yet implemented.
 
-3. **Multi-server:** Can one agent process participate in multiple Discord servers? discord.py supports this natively. The library's config would need per-server channel mappings. Defer — not needed for the initial use case.
+3. **Multi-server:** Can one agent process participate in multiple Discord servers? discord.py supports this natively. The library's config would need per-server channel mappings. Not needed for the prototype.
 
-4. **Hot reload:** Can an agent update its config without restarting? Not in Phase 1. The operator restarts the process. Consider adding config file watching later if operators ask for it.
-
-## Appendix
-
-- [Scope](scope.md)
-- [Landscape Synthesis](landscape-synthesis.md)
-- [Design Journal](design-journal.md)
-- Research: [OSS](research/open-source-landscape.md) | [Commercial](research/commercial-products.md) | [Libraries](research/libraries-and-sdks.md) | [Community](research/community-patterns.md)
+4. **Hot reload:** Can an agent update its config without restarting? The operator restarts the process. Consider config file watching if operators ask for it.

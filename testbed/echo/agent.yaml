@@ -1,4 +1,4 @@
-# Agora agent configuration
+# Echo agent on AgoraGenesis
 token_env: DISCORD_BOT_TOKEN
 
 channels:
@@ -6,7 +6,6 @@ channels:
   bot-chat: subscribe
 
 exchange_cap: 5
-
 jitter_seconds: [1.0, 3.0]
 typing_indicator: true
 reply_threading: true

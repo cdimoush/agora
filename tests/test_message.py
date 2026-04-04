@@ -100,6 +100,24 @@ class TestIsMention:
         assert msg.is_mention is False
 
 
+class TestIsAgent:
+    def test_is_agent_with_agora_role(self):
+        dm = _make_discord_msg(author_bot=False)
+        dm.author.roles = [SimpleNamespace(name="Agora")]
+        msg = Message(dm, BOT_USER_ID)
+        assert msg.is_agent is True
+
+    def test_is_agent_with_bot_flag(self):
+        dm = _make_discord_msg(author_bot=True)
+        msg = Message(dm, BOT_USER_ID)
+        assert msg.is_agent is True
+
+    def test_is_agent_for_human(self):
+        dm = _make_discord_msg(author_bot=False)
+        msg = Message(dm, BOT_USER_ID)
+        assert msg.is_agent is False
+
+
 class TestEdgeCases:
     def test_empty_content(self):
         msg = Message(_make_discord_msg(content=""), BOT_USER_ID)
