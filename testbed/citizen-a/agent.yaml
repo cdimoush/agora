@@ -1,6 +1,7 @@
 # Citizen A (Nova) on AgoraGenesis
 token_env: AGORA_CITIZEN_A_TOKEN
 name: citizen-a
+display_name: Nova
 telemetry: true
 respond_mode: mention-only
 mention_resolution: true

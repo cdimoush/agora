@@ -22,6 +22,7 @@ class Config:
     token_env: str
 
     name: str = ""
+    display_name: str = ""
     telemetry: bool = False
     respond_mode: str = "mention-only"
     channels: dict[str, str] = field(default_factory=dict)

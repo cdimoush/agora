@@ -150,6 +150,8 @@ class AgoraBot:
             f"Connected as {self._client.user} (ID: {self._client.user.id})"
         )
         self._resolve_channels()
+        if self.config.display_name:
+            await self._set_display_name()
         if self.config.mention_resolution:
             self._resolve_members()
         self._check_intents()
@@ -342,6 +344,17 @@ class AgoraBot:
             lambda m: f"<@{self._member_map[m.group(1).lower()]}>",
             text,
         )
+
+    async def _set_display_name(self) -> None:
+        """Set the bot's server nickname from config.display_name."""
+        for guild in self._client.guilds:
+            try:
+                await guild.me.edit(nick=self.config.display_name)
+                logger.info(f"Display name set to '{self.config.display_name}'")
+            except discord.Forbidden:
+                logger.warning(
+                    f"No permission to set nickname in {guild.name}"
+                )
 
     def _get_channel_mode(self, channel_name: str) -> str | None:
         if not self.config.channels:
