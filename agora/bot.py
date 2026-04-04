@@ -56,7 +56,13 @@ class AgoraBot:
 
     async def should_respond(self, message: Message) -> bool:
         """Return True to trigger response generation.
-        Default: respond to @mentions only."""
+
+        Respects config.respond_mode:
+        - "mention-only": respond only when @mentioned (default)
+        - "all": respond to every message
+        """
+        if self.config.respond_mode == "all":
+            return True
         return message.is_mention
 
     async def generate_response(self, message: Message) -> str | None:

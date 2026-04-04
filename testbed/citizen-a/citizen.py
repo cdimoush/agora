@@ -39,13 +39,6 @@ class CitizenBot(AgoraBot):
         project_dir = Path(path).resolve().parent
         return cls(config, project_dir=project_dir)
 
-    async def should_respond(self, message: Message) -> bool:
-        if message.is_mention:
-            return True
-        # In subscribe channels, respond to all messages.
-        # Exchange cap in the dispatch pipeline prevents infinite loops.
-        return True
-
     async def generate_response(self, message: Message) -> str | None:
         channel = self._client.get_channel(message.channel_id)
         if not channel:
