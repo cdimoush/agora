@@ -1,8 +1,7 @@
 
-# Beads
-.beads/
+# Beads (internal filtering handled by .beads/.gitignore)
+.beads/embeddeddolt/
 .dolt/
-*.db
 .beads-credential-key
 
 # Secrets
@@ -12,6 +11,11 @@
 # Local instance (tokens, config, runner)
 instance/
 
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
 # Claude Code
 .claude/
-__pycache__/

@@ -1,7 +1,5 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "agora",
-  "project_id": "f5ce152d-98e8-4cbb-9172-335d1bfde5cf"
+  "dolt_mode": "embedded"
 }
