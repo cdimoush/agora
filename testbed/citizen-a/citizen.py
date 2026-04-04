@@ -69,56 +69,73 @@ class CitizenBot(AgoraBot):
 
     async def _call_claude(self, prompt: str) -> str | None:
         """Spawn claude -p subprocess and return the response text."""
-        env = os.environ.copy()
-        env.pop("CLAUDECODE", None)  # Prevent nested session error
+        with self.span("llm_call", model="haiku", prompt_length=len(prompt)) as s:
+            s["prompt_preview"] = prompt[:200]
 
-        cmd = [
-            "claude", "-p", prompt,
-            "--output-format", "json",
-            "--model", "haiku",
-            "--max-budget-usd", "0.02",
-            "--append-system-prompt", SYSTEM_PROMPT,
-            "--dangerously-skip-permissions",
-        ]
+            env = os.environ.copy()
+            env.pop("CLAUDECODE", None)  # Prevent nested session error
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self._project_dir),
-            env=env,
-            start_new_session=True,
-        )
+            cmd = [
+                "claude", "-p", prompt,
+                "--output-format", "json",
+                "--model", "haiku",
+                "--max-budget-usd", "0.02",
+                "--append-system-prompt", SYSTEM_PROMPT,
+                "--dangerously-skip-permissions",
+            ]
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=60
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self._project_dir),
+                env=env,
+                start_new_session=True,
             )
-        except asyncio.TimeoutError:
+
             try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            await proc.wait()
-            logger.warning("Claude subprocess timed out")
-            return None
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=60
+                )
+            except asyncio.TimeoutError:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                await proc.wait()
+                s["decision"] = "error"
+                s["error"] = "timeout"
+                logger.warning("Claude subprocess timed out")
+                return None
 
-        if proc.returncode != 0:
-            logger.error(
-                "Claude exit=%d stderr=%s stdout=%s",
-                proc.returncode,
-                stderr.decode()[:500],
-                stdout.decode()[:500],
-            )
-            return None
+            if proc.returncode != 0:
+                s["decision"] = "error"
+                s["error"] = f"exit={proc.returncode}"
+                logger.error(
+                    "Claude exit=%d stderr=%s stdout=%s",
+                    proc.returncode,
+                    stderr.decode()[:500],
+                    stdout.decode()[:500],
+                )
+                return None
 
-        try:
-            data = json.loads(stdout.decode())
-        except json.JSONDecodeError:
-            logger.error("Failed to parse Claude JSON output")
-            return None
+            try:
+                data = json.loads(stdout.decode())
+            except json.JSONDecodeError:
+                s["decision"] = "error"
+                s["error"] = "json_decode"
+                logger.error("Failed to parse Claude JSON output")
+                return None
 
-        return data.get("result", "") or None
+            result = data.get("result", "") or None
+            if result:
+                s["decision"] = "pass"
+                s["response_length"] = len(result)
+                s["response_preview"] = result[:200]
+            else:
+                s["decision"] = "empty"
+
+            return result
 
 
 if __name__ == "__main__":
