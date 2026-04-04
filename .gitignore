@@ -8,8 +8,8 @@
 .env
 .env.*
 
-# Local instance (tokens, config, runner)
-instance/
+# Testbed secrets (tokens are per-bot, never committed)
+testbed/*/.env
 
 # Python
 __pycache__/
