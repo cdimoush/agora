@@ -48,7 +48,7 @@ def _make_discord_msg(
     channel.name = channel_name
     channel.id = 500
     channel.send = AsyncMock()
-    channel.trigger_typing = AsyncMock()
+    channel.typing = MagicMock(return_value=AsyncMock())
 
     msg = AsyncMock()
     msg.author = author

@@ -33,8 +33,14 @@ class AgoraBot:
         self._channel_map: dict[str, str] = {}
         self._channel_ids: dict[str, int] = {}
 
-        self._client.event(self._on_ready)
-        self._client.event(self._on_message)
+        # discord.py matches events by function __name__
+        @self._client.event
+        async def on_ready():
+            await self._on_ready()
+
+        @self._client.event
+        async def on_message(message):
+            await self._on_message(message)
 
     # ── Public: operators override these ──────────────────────
 
@@ -102,7 +108,7 @@ class AgoraBot:
 
         # Step 7: Typing indicator
         if self.config.typing_indicator:
-            await discord_message.channel.trigger_typing()
+            await discord_message.channel.typing().__aenter__()
 
         # Step 8: Operator's generate_response
         try:
