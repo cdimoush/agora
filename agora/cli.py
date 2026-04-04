@@ -22,7 +22,7 @@ class %(class_name)s(AgoraBot):
 
     async def generate_response(self, message):
         # Return a string to post as a reply, or None to stay silent.
-        return f"Hello {{message.author_name}}, you said: {{message.content}}"
+        return f"Hello {message.author_name}, you said: {message.content}"
 
 
 if __name__ == "__main__":
