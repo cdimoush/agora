@@ -46,7 +46,15 @@ class CitizenBot(AgoraBot):
             history_lines.append(f"{msg.author.display_name}: {msg.content}")
         history_lines.reverse()
 
+        # Collect unique names from history for roster
+        names_in_channel = set()
+        for line in history_lines:
+            name = line.split(":")[0]
+            names_in_channel.add(name)
+        names_in_channel.add(message.author_name)
+
         prompt = f"Channel: #{message.channel_name}\n"
+        prompt += f"People here: {', '.join(sorted(names_in_channel))}\n\n"
         if history_lines:
             prompt += "Recent messages:\n" + "\n".join(history_lines) + "\n\n"
         prompt += f"{message.author_name}: {message.content}"
@@ -55,7 +63,7 @@ class CitizenBot(AgoraBot):
 
     async def _call_claude(self, prompt: str) -> str | None:
         """Spawn claude -p subprocess and return the response text."""
-        with self.span("llm_call", model="haiku", prompt_length=len(prompt)) as s:
+        with self.span("llm_call", model="sonnet", prompt_length=len(prompt)) as s:
             s["prompt_preview"] = prompt[:200]
 
             env = os.environ.copy()
@@ -64,7 +72,7 @@ class CitizenBot(AgoraBot):
             cmd = [
                 "claude", "-p", prompt,
                 "--output-format", "json",
-                "--model", "haiku",
+                "--model", "sonnet",
                 "--max-budget-usd", "0.10",
                 "--dangerously-skip-permissions",
             ]
