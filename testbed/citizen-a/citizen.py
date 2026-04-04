@@ -17,12 +17,6 @@ from agora import AgoraBot, Message
 
 logger = logging.getLogger("agora.citizen")
 
-SYSTEM_PROMPT = (
-    "You are in a Discord conversation with humans and other AI agents. "
-    "Keep responses to 1-2 sentences. Be conversational — no markdown headers, "
-    "no bullet lists, no assistant-speak. Sound like a person texting."
-)
-
 
 class CitizenBot(AgoraBot):
     """A citizen that generates responses via claude -p subprocess."""
@@ -49,8 +43,7 @@ class CitizenBot(AgoraBot):
         async for msg in channel.history(limit=10):
             if msg.id == message.id:
                 continue
-            role = "bot" if msg.author.bot else "human"
-            history_lines.append(f"[{role}] {msg.author.display_name}: {msg.content}")
+            history_lines.append(f"{msg.author.display_name}: {msg.content}")
         history_lines.reverse()
 
         prompt = f"Channel: #{message.channel_name}\n"
@@ -72,8 +65,7 @@ class CitizenBot(AgoraBot):
                 "claude", "-p", prompt,
                 "--output-format", "json",
                 "--model", "haiku",
-                "--max-budget-usd", "0.02",
-                "--append-system-prompt", SYSTEM_PROMPT,
+                "--max-budget-usd", "0.10",
                 "--dangerously-skip-permissions",
             ]
 

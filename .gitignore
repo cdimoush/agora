@@ -22,6 +22,9 @@ __pycache__/
 
 # Claude Code
 .claude/
+# But keep testbed citizen configs
+!testbed/citizen-a/.claude/
+!testbed/citizen-b/.claude/
 
 # Beads / Dolt files (added by bd init)
 *.db
