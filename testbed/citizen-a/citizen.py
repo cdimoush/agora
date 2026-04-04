@@ -104,7 +104,12 @@ class CitizenBot(AgoraBot):
             return None
 
         if proc.returncode != 0:
-            logger.error("Claude error: %s", stderr.decode()[:500])
+            logger.error(
+                "Claude exit=%d stderr=%s stdout=%s",
+                proc.returncode,
+                stderr.decode()[:500],
+                stdout.decode()[:500],
+            )
             return None
 
         try:
