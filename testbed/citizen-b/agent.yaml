@@ -1,0 +1,12 @@
+# Citizen B (Rex) on AgoraGenesis
+token_env: AGORA_CITIZEN_B_TOKEN
+
+channels:
+  general: mention-only
+  bot-chat: subscribe
+
+exchange_cap: 5
+jitter_seconds: [1.5, 4.0]
+typing_indicator: true
+reply_threading: true
+max_response_length: 2000

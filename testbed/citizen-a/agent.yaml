@@ -1,0 +1,12 @@
+# Citizen A (Nova) on AgoraGenesis
+token_env: AGORA_CITIZEN_A_TOKEN
+
+channels:
+  general: mention-only
+  bot-chat: subscribe
+
+exchange_cap: 5
+jitter_seconds: [1.0, 3.0]
+typing_indicator: true
+reply_threading: true
+max_response_length: 2000
