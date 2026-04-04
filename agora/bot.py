@@ -12,6 +12,7 @@ import discord
 from agora.chunker import chunk_message
 from agora.config import Config
 from agora.message import Message
+from agora.safety import ExchangeCapChecker
 
 logger = logging.getLogger("agora")
 
@@ -30,6 +31,7 @@ class AgoraBot:
         intents.members = False
         self._client = discord.Client(intents=intents)
 
+        self._exchange_cap = ExchangeCapChecker(config.exchange_cap)
         self._channel_map: dict[str, str] = {}
         self._channel_ids: dict[str, int] = {}
 
@@ -92,6 +94,10 @@ class AgoraBot:
 
         # Step 4: Enforce mention-only mode
         if mode == "mention-only" and not message.is_mention:
+            return
+
+        # Step 4.5: Exchange cap check
+        if await self._exchange_cap.is_capped(discord_message.channel):
             return
 
         # Step 5: Operator's should_respond
