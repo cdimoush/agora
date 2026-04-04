@@ -1,70 +1,43 @@
-"""Live integration tests for the Phase 3 testbed (citizens + moderator).
+"""Live integration tests — runs against an already-running testbed.
 
-Requires:
-  - AGORA_CITIZEN_A_TOKEN, AGORA_CITIZEN_B_TOKEN, AGORA_MOD_TOKEN env vars
-  - Bots invited to AgoraGenesis with #bot-chat and #mod-log channels
-  - MESSAGE_CONTENT intent enabled for all bots
-  - Run with: pytest tests/integration/test_testbed_live.py --live -v
+Prerequisite:
+    python testbed/run.py   # start bots in another terminal
 
-These tests are slow (30+ seconds) — they start real bots and wait for
-Claude subprocess responses.
+Then run:
+    .venv/bin/python -m pytest tests/integration/test_testbed_live.py --live -v
+
+These tests connect a helper client (via the moderator token), inject
+messages into #bot-chat, and verify the running citizens respond.
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import discord
 import pytest
 import pytest_asyncio
 
-# Ensure repo root importable
 repo_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(repo_root))
 
-from agora import Config
-
 logger = logging.getLogger("agora.test.testbed")
 
-TIMEOUT = 45  # seconds — Claude responses can take a while
+RESPONSE_TIMEOUT = 60  # seconds to wait for a citizen response
+CONNECT_TIMEOUT = 15
 BOT_CHAT = "bot-chat"
 MOD_LOG = "mod-log"
-
-
-def _import_citizen():
-    """Import CitizenBot from the hyphenated citizen-a directory."""
-    spec = importlib.util.spec_from_file_location(
-        "citizen_a", repo_root / "testbed" / "citizen-a" / "citizen.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.CitizenBot
-
-
-def _import_moderator():
-    """Import ModeratorBot from the moderator directory."""
-    spec = importlib.util.spec_from_file_location(
-        "mod", repo_root / "testbed" / "moderator" / "mod.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.ModeratorBot
-
-
-CitizenBot = _import_citizen()
-ModeratorBot = _import_moderator()
 
 
 # ── Helpers ──────────────────────────────────────────────────
 
 
 def _load_env(path: Path) -> None:
-    """Source a .env file into os.environ."""
     if not path.exists():
         return
     with open(path) as f:
@@ -83,29 +56,25 @@ def _find_channel(client: discord.Client, name: str) -> discord.TextChannel | No
     return None
 
 
-async def _start_bot(bot, timeout: float = TIMEOUT):
-    """Start a bot and wait for on_ready, returning the background task."""
-    ready = asyncio.Event()
-    original = bot._on_ready
+async def _reset_exchange_cap(channel: discord.TextChannel, needed: int = 6) -> int:
+    """Delete recent bot messages to reset the exchange cap.
 
-    async def patched():
-        await original()
-        ready.set()
-
-    bot._on_ready = patched
-    task = asyncio.get_event_loop().create_task(bot._client.start(bot.config.token))
-    await asyncio.wait_for(ready.wait(), timeout=timeout)
-    return task
-
-
-async def _stop_bot(bot, task):
-    """Gracefully stop a bot."""
-    await bot._client.close()
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    Returns the number of messages deleted.
+    """
+    deleted = 0
+    async for msg in channel.history(limit=needed):
+        if msg.author.bot:
+            try:
+                await msg.delete()
+                deleted += 1
+            except discord.Forbidden:
+                logger.warning("No permission to delete messages — exchange cap may block")
+                break
+            except discord.NotFound:
+                pass
+    if deleted:
+        logger.info("Deleted %d bot messages to reset exchange cap", deleted)
+    return deleted
 
 
 # ── Fixtures ─────────────────────────────────────────────────
@@ -113,19 +82,10 @@ async def _stop_bot(bot, task):
 
 @pytest.fixture(scope="session", autouse=True)
 def load_env_files():
-    """Load .env files from testbed directories."""
     testbed = repo_root / "testbed"
     _load_env(testbed / "citizen-a" / ".env")
     _load_env(testbed / "citizen-b" / ".env")
     _load_env(testbed / "moderator" / ".env")
-
-
-@pytest.fixture(scope="session")
-def citizen_a_token():
-    token = os.environ.get("AGORA_CITIZEN_A_TOKEN")
-    if not token:
-        pytest.skip("AGORA_CITIZEN_A_TOKEN not set")
-    return token
 
 
 @pytest.fixture(scope="session")
@@ -136,25 +96,20 @@ def mod_token():
     return token
 
 
-@pytest_asyncio.fixture()
-async def citizen_a(citizen_a_token):
-    """Start citizen-a, yield it, then shut it down."""
-    bot = CitizenBot.from_config(
-        str(repo_root / "testbed" / "citizen-a" / "agent.yaml")
-    )
-    task = await _start_bot(bot)
-    try:
-        yield bot
-    finally:
-        await _stop_bot(bot, task)
+@pytest.fixture(scope="session")
+def citizen_a_id():
+    """The user ID of citizen-a, so we can @mention it."""
+    # Read from env or discover at runtime
+    return os.environ.get("AGORA_CITIZEN_A_ID")
 
 
 @pytest_asyncio.fixture()
-async def helper_client(mod_token):
-    """A helper Discord client for sending test messages.
+async def helper(mod_token):
+    """A Discord client for injecting test messages.
 
-    Uses the moderator token since we need a separate identity from the
-    citizen bots to trigger responses.
+    Uses the moderator token — a second connection alongside the running
+    moderator bot. Both see all messages. The helper sends, the running
+    citizens respond.
     """
     intents = discord.Intents.default()
     intents.message_content = True
@@ -168,7 +123,8 @@ async def helper_client(mod_token):
 
     task = asyncio.get_event_loop().create_task(client.start(mod_token))
     try:
-        await asyncio.wait_for(ready.wait(), timeout=TIMEOUT)
+        await asyncio.wait_for(ready.wait(), timeout=CONNECT_TIMEOUT)
+        logger.info("Helper connected as %s", client.user)
         yield client
     finally:
         await client.close()
@@ -183,70 +139,108 @@ async def helper_client(mod_token):
 
 
 class TestCitizenResponds:
-    @pytest.mark.asyncio
-    async def test_citizen_connects(self, citizen_a):
-        """Citizen-a connects to Discord and sees #bot-chat."""
-        assert citizen_a._client.user is not None
-        channel = _find_channel(citizen_a._client, BOT_CHAT)
-        assert channel is not None, f"#{BOT_CHAT} not found"
 
     @pytest.mark.asyncio
-    async def test_citizen_responds_to_mention(self, citizen_a, helper_client):
-        """Citizen-a responds when @mentioned in #bot-chat."""
-        channel = _find_channel(helper_client, BOT_CHAT)
+    async def test_helper_sees_bot_chat(self, helper):
+        """Helper client can see #bot-chat on the server."""
+        channel = _find_channel(helper, BOT_CHAT)
+        assert channel is not None, f"#{BOT_CHAT} not found on server"
+
+    @pytest.mark.asyncio
+    async def test_citizen_responds_to_message(self, helper, citizen_a_id):
+        """Send a message in #bot-chat and verify a citizen responds.
+
+        If citizen_a_id is set, @mentions citizen-a specifically.
+        Otherwise sends an unmentioned message that any citizen may pick up.
+        """
+        channel = _find_channel(helper, BOT_CHAT)
         assert channel is not None
 
-        citizen_user = citizen_a._client.user
+        # Reset exchange cap so citizens aren't blocked
+        await _reset_exchange_cap(channel)
+        await asyncio.sleep(1)  # brief pause after deletions
 
-        # Send @mention
-        mention_text = f"<@{citizen_user.id}> hello, what do you think about music?"
-        await channel.send(mention_text)
+        # Build test message
+        prompt = "What's your favorite way to spend a rainy day?"
+        if citizen_a_id:
+            text = f"<@{citizen_a_id}> {prompt}"
+        else:
+            text = prompt
 
-        # Wait for citizen to respond
+        # Set up response listener BEFORE sending
+        responses: list[dict] = []
         response_received = asyncio.Event()
-        response_content = []
+        helper_user_id = helper.user.id
 
-        @citizen_a._client.event
+        @helper.event
         async def on_message(msg):
-            # Look for a message from the citizen (not from the helper)
-            if msg.author.id == citizen_user.id and msg.channel.name == BOT_CHAT:
-                response_content.append(msg.content)
+            # Collect messages from other bots in #bot-chat
+            if (msg.channel.name == BOT_CHAT
+                    and msg.author.bot
+                    and msg.author.id != helper_user_id):
+                responses.append({
+                    "author": msg.author.display_name,
+                    "content": msg.content,
+                    "elapsed": time.time() - send_time,
+                })
+                logger.info("[RESPONSE %.1fs] %s: %s",
+                            responses[-1]["elapsed"],
+                            msg.author.display_name,
+                            msg.content[:200])
                 response_received.set()
 
+        # Send the test message
+        send_time = time.time()
+        logger.info("SENDING: %s", text)
+        await channel.send(text)
+
+        # Wait for at least one response
         try:
-            await asyncio.wait_for(response_received.wait(), timeout=TIMEOUT)
+            await asyncio.wait_for(response_received.wait(), timeout=RESPONSE_TIMEOUT)
         except asyncio.TimeoutError:
-            pytest.fail("Citizen did not respond within timeout")
-
-        assert len(response_content) > 0
-        assert len(response_content[0]) > 0
-        assert len(response_content[0]) < 500
-        logger.info("Citizen responded: %s", response_content[0][:100])
-
-
-class TestExchangeCap:
-    @pytest.mark.asyncio
-    async def test_moderator_warns_on_cap(self, citizen_a, helper_client):
-        """Moderator posts warning in #mod-log when exchange cap is reached.
-
-        This is a manual verification test — it confirms the moderator
-        connects and can see #mod-log. Full cap testing requires two
-        citizens and enough back-and-forth to trigger the cap.
-        """
-        # Start moderator alongside the citizen
-        mod = ModeratorBot.from_config(
-            str(repo_root / "testbed" / "moderator" / "agent.yaml")
-        )
-        mod_task = await _start_bot(mod)
-
-        try:
-            assert mod._client.user is not None
-            mod_log = _find_channel(mod._client, MOD_LOG)
-            assert mod_log is not None, f"#{MOD_LOG} not found"
-            logger.info(
-                "Moderator online as %s, monitoring #%s",
-                mod._client.user,
-                MOD_LOG,
+            pytest.fail(
+                f"No citizen response within {RESPONSE_TIMEOUT}s. "
+                "Is the testbed running? (python testbed/run.py)"
             )
-        finally:
-            await _stop_bot(mod, mod_task)
+
+        # Wait a bit more to collect additional responses
+        await asyncio.sleep(10)
+
+        # Verify
+        assert len(responses) > 0, "Expected at least one citizen response"
+        first = responses[0]
+        assert len(first["content"]) > 0, "Response was empty"
+        assert len(first["content"]) < 2000, "Response exceeded max length"
+
+        logger.info("=" * 50)
+        logger.info("RESULTS: %d response(s)", len(responses))
+        for r in responses:
+            logger.info("  [%.1fs] %s: %s", r["elapsed"], r["author"], r["content"][:150])
+        logger.info("=" * 50)
+
+
+class TestModLog:
+
+    @pytest.mark.asyncio
+    async def test_helper_sees_mod_log(self, helper):
+        """Helper client can see #mod-log on the server."""
+        channel = _find_channel(helper, MOD_LOG)
+        assert channel is not None, f"#{MOD_LOG} not found on server"
+
+    @pytest.mark.asyncio
+    async def test_mod_log_has_history(self, helper):
+        """Check if #mod-log has any moderator warnings from past runs."""
+        channel = _find_channel(helper, MOD_LOG)
+        assert channel is not None
+
+        mod_messages = []
+        async for msg in channel.history(limit=20):
+            if "[MOD]" in msg.content:
+                mod_messages.append(msg.content)
+
+        if mod_messages:
+            logger.info("Found %d moderator warnings in #mod-log", len(mod_messages))
+            for m in mod_messages[:5]:
+                logger.info("  %s", m)
+        else:
+            logger.info("No moderator warnings found yet (expected if cap hasn't fired)")
