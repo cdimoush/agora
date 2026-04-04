@@ -142,7 +142,7 @@ class TestMentionOnlyMode:
 
         bot.generate_response = gen_resp
         await bot._on_message(msg)
-        msg.reply.assert_called_once_with("response")
+        msg.reply.assert_called_once_with("response", mention_author=False)
 
 
 class TestEmptyChannelsConfig:
@@ -167,7 +167,7 @@ class TestEmptyChannelsConfig:
 
         bot.generate_response = gen_resp
         await bot._on_message(msg)
-        msg.reply.assert_called_once_with("hi")
+        msg.reply.assert_called_once_with("hi", mention_author=False)
 
 
 class TestShouldRespondDispatch:
@@ -202,7 +202,7 @@ class TestShouldRespondDispatch:
         msg = _make_discord_msg(channel_name="general")
         await bot._on_message(msg)
         assert gen_called == [True]
-        msg.reply.assert_called_once_with("reply")
+        msg.reply.assert_called_once_with("reply", mention_author=False)
 
     @pytest.mark.asyncio
     async def test_skips_generate_when_should_respond_false(self):
@@ -239,7 +239,7 @@ class TestResponseSending:
         bot.generate_response = gr
         msg = _make_discord_msg(channel_name="general")
         await bot._on_message(msg)
-        msg.reply.assert_called_once_with("threaded")
+        msg.reply.assert_called_once_with("threaded", mention_author=False)
         msg.channel.send.assert_not_called()
 
     @pytest.mark.asyncio

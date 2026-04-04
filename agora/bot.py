@@ -268,7 +268,7 @@ class AgoraBot:
             with self.span("send_response", chunks=len(chunks)) as s:
                 for i, chunk in enumerate(chunks):
                     if i == 0 and self.config.reply_threading:
-                        await discord_message.reply(chunk)
+                        await discord_message.reply(chunk, mention_author=False)
                     else:
                         await discord_message.channel.send(chunk)
                 s["decision"] = "sent"
