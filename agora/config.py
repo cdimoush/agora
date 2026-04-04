@@ -20,6 +20,7 @@ _VALID_CHANNEL_MODES = {"subscribe", "mention-only", "write-only"}
 class Config:
     token_env: str
 
+    name: str = ""
     channels: dict[str, str] = field(default_factory=dict)
 
     exchange_cap: int = 5
