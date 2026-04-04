@@ -71,6 +71,15 @@ async def main():
 
     bots = [mod, citizen_a, citizen_b]
 
+    # Telemetry — structured logs + conversation replay
+    from agora.telemetry import LogProcessor, ReplayProcessor
+
+    log_proc = LogProcessor()
+    replay_proc = ReplayProcessor()
+    for bot in bots:
+        bot.add_processor(log_proc)
+        bot.add_processor(replay_proc)
+
     # Signal handling for graceful shutdown
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -88,6 +97,14 @@ async def main():
     await stop_event.wait()
 
     logger.info("Shutting down...")
+
+    # Print conversation replay before closing
+    replay_output = replay_proc.replay()
+    if replay_output:
+        print("\n── Conversation Replay ──")
+        print(replay_output)
+        print("── End Replay ──\n")
+
     for bot in bots:
         await bot._client.close()
     for task in tasks:
