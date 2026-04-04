@@ -3,6 +3,10 @@ token_env: AGORA_CITIZEN_B_TOKEN
 name: citizen-b
 telemetry: true
 respond_mode: mention-only
+mention_resolution: true
+mention_aliases:
+  Nova: agora-citizen-a
+  Rex: agora-citizen-b
 
 channels:
   general: mention-only
