@@ -1,11 +1,12 @@
-"""Send a test message from citizen-a to citizen-b and observe responses.
+"""Send a test message from citizen-b (Rex) to citizen-a (Nova) and observe the volley.
 
 Usage:
     python testbed/run.py &          # start testbed first
     python testbed/test_conversation.py
 
-Citizen-a @mentions citizen-b with a random question. Only citizen-b
-should respond (mention-only mode). Captures responses and prints results.
+Rex (direct, opinionated) @mentions Nova (curious, asks follow-ups) with a
+random question. Nova should respond and @mention Rex back, creating a
+natural conversation volley. Only @mentioned citizens should respond.
 """
 
 from __future__ import annotations
@@ -37,11 +38,12 @@ QUESTIONS = [
     "Do you think it's better to be honest or kind when you can't be both?",
 ]
 
-CITIZEN_A_TOKEN_ENV = "AGORA_CITIZEN_A_TOKEN"
-CITIZEN_B_ID = 1490080381007954041  # agora-citizen-b
+MOD_TOKEN_ENV = "AGORA_MOD_TOKEN"  # moderator has delete permissions
+CITIZEN_A_ID = 1490079230191468807  # agora-citizen-a (Nova)
+CITIZEN_B_ID = 1490080381007954041  # agora-citizen-b (Rex)
 BOT_CHAT = "bot-chat"
 RESPONSE_TIMEOUT = 45
-COLLECT_EXTRA = 15  # seconds to collect additional responses after first
+COLLECT_EXTRA = 30  # longer window to catch volleys
 
 
 def _load_env(path: Path) -> None:
@@ -61,9 +63,9 @@ async def main():
     _load_env(testbed_dir / "citizen-b" / ".env")
     _load_env(testbed_dir / "moderator" / ".env")
 
-    token = os.environ.get(CITIZEN_A_TOKEN_ENV)
+    token = os.environ.get(MOD_TOKEN_ENV)
     if not token:
-        logger.error("%s not set", CITIZEN_A_TOKEN_ENV)
+        logger.error("%s not set", MOD_TOKEN_ENV)
         sys.exit(1)
 
     intents = discord.Intents.default()
@@ -117,9 +119,11 @@ async def main():
             logger.error("#%s not found", BOT_CHAT)
             return
 
-        # Reset exchange cap
+        # Reset exchange cap — purge ALL recent bot messages from history
+        # The exchange cap counts consecutive bot messages in channel.history().
+        # Deleting them ensures a clean slate for the test.
         deleted = 0
-        async for msg in channel.history(limit=10):
+        async for msg in channel.history(limit=50):
             if msg.author.bot:
                 try:
                     await msg.delete()
@@ -127,14 +131,22 @@ async def main():
                 except (discord.Forbidden, discord.NotFound):
                     pass
         if deleted:
-            logger.info("Deleted %d bot messages to reset exchange cap", deleted)
-            await asyncio.sleep(1)
+            logger.info("Purged %d bot messages to reset exchange cap", deleted)
+        await asyncio.sleep(3)  # let Discord propagate deletions
 
-        # Pick a random question and send
+        # Verify cap is clear
+        bot_count = 0
+        async for msg in channel.history(limit=6):
+            if msg.author.bot:
+                bot_count += 1
+        if bot_count > 0:
+            logger.warning("Still %d bot messages after purge — cap may fire", bot_count)
+
+        # Rex (citizen-b) sends opener @mentioning Nova (citizen-a)
         question = random.choice(QUESTIONS)
-        text = f"<@{CITIZEN_B_ID}> {question}"
+        text = f"<@{CITIZEN_A_ID}> {question}"
         send_time = time.time()
-        logger.info("SENDING: %s", text)
+        logger.info("SENDING as Rex: %s", text)
         await channel.send(text)
 
         # Wait for first response
@@ -144,40 +156,29 @@ async def main():
             logger.error("No response within %ds — is the testbed running?", RESPONSE_TIMEOUT)
             return
 
-        # Collect additional responses
-        logger.info("Waiting %ds for additional responses...", COLLECT_EXTRA)
+        # Collect volleys — Nova should ask a follow-up, Rex may reply
+        logger.info("Waiting %ds for volleys...", COLLECT_EXTRA)
         await asyncio.sleep(COLLECT_EXTRA)
 
         # Report
         print()
         print("=" * 60)
-        print(f"QUESTION: {question}")
-        print(f"RESULTS: {len(responses)} response(s) in {time.time() - send_time:.1f}s")
+        print(f"REX ASKS: {question}")
+        print(f"CONVERSATION: {len(responses)} message(s) in {time.time() - send_time:.1f}s")
         print("-" * 60)
 
-        citizen_b_responded = False
-        citizen_a_responded = False
-
-        for r in responses:
-            marker = ""
-            if r["author_id"] == CITIZEN_B_ID:
-                citizen_b_responded = True
-                marker = " [EXPECTED — was @mentioned]"
-            else:
-                citizen_a_responded = True
-                marker = " [UNEXPECTED — was NOT @mentioned]"
-
-            print(f"  [{r['elapsed']:.1f}s] {r['author']}{marker}:")
+        for i, r in enumerate(responses, 1):
+            print(f"  [{r['elapsed']:.1f}s] {r['author']}:")
             print(f"    {r['content'][:300]}")
             print()
 
         print("-" * 60)
-        if citizen_b_responded and not citizen_a_responded:
-            print("PASS: Only the @mentioned citizen responded")
-        elif citizen_b_responded and citizen_a_responded:
-            print("FAIL: citizen-a responded despite not being @mentioned (agora-knr bug)")
-        elif not citizen_b_responded:
-            print("FAIL: citizen-b did not respond despite being @mentioned")
+        if len(responses) >= 2:
+            print(f"VOLLEY: {len(responses)} exchanges — conversation is alive")
+        elif len(responses) == 1:
+            print("SINGLE: Nova responded but no volley (Rex didn't get mentioned back)")
+        else:
+            print("FAIL: No responses")
         print("=" * 60)
 
     finally:

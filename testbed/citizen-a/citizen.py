@@ -49,7 +49,7 @@ class CitizenBot(AgoraBot):
         prompt = f"Channel: #{message.channel_name}\n"
         if history_lines:
             prompt += "Recent messages:\n" + "\n".join(history_lines) + "\n\n"
-        prompt += f"{message.author_name}: {message.content}"
+        prompt += f"{message.author_name} (<@{message.author_id}>): {message.content}"
 
         return await self._call_claude(prompt)
 
