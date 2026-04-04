@@ -244,6 +244,16 @@ class AgoraBot:
                     logger.error(f"generate_response raised: {e}")
                     return
 
+            # Step 8.5: Resolve @name mentions to <@ID>
+            with self.span("mention_resolution") as s:
+                if self.config.mention_resolution and self._mention_pattern:
+                    before = response
+                    response = self._resolve_mentions(response)
+                    resolved = response.count("<@") - before.count("<@")
+                    s["resolved"] = resolved
+                else:
+                    s["resolved"] = 0
+
             # Step 9: Truncate and chunk
             with self.span("truncate_chunk") as s:
                 original_length = len(response)
@@ -322,6 +332,15 @@ class AgoraBot:
 
         logger.info(
             f"Mention resolution: {len(self._member_map)} names mapped"
+        )
+
+    def _resolve_mentions(self, text: str) -> str:
+        """Replace @displayname with <@ID> in outgoing text."""
+        if not self._mention_pattern:
+            return text
+        return self._mention_pattern.sub(
+            lambda m: f"<@{self._member_map[m.group(1).lower()]}>",
+            text,
         )
 
     def _get_channel_mode(self, channel_name: str) -> str | None:
