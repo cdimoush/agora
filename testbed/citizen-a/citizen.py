@@ -54,10 +54,12 @@ class CitizenBot(AgoraBot):
         names_in_channel.add(message.author_name)
 
         prompt = f"Channel: #{message.channel_name}\n"
-        prompt += f"People here: {', '.join(sorted(names_in_channel))}\n\n"
+        prompt += f"People here: {', '.join(sorted(names_in_channel))}\n"
+        prompt += "Recent messages:\n"
         if history_lines:
-            prompt += "Recent messages:\n" + "\n".join(history_lines) + "\n\n"
-        prompt += f"{message.author_name}: {message.content}"
+            prompt += "\n".join(history_lines) + "\n"
+        prompt += f"{message.author_name}: {message.content}\n\n"
+        prompt += "Respond as Nova. Output only Nova's reply, nothing else."
 
         return await self._call_claude(prompt)
 
