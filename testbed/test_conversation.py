@@ -4,9 +4,10 @@ Usage:
     python testbed/run.py &          # start testbed first
     python testbed/test_conversation.py
 
-Rex (direct, opinionated) @mentions Nova (curious, asks follow-ups) with a
-random question. Nova should respond and @mention Rex back, creating a
-natural conversation volley. Only @mentioned citizens should respond.
+Uses the moderator to purge old messages (reset exchange cap), then a second
+connection as citizen-b sends the opener @mentioning citizen-a. This way Nova
+sees the message as coming from Rex (with Rex's Discord ID) and can @mention
+him back to create a volley.
 """
 
 from __future__ import annotations
@@ -38,12 +39,13 @@ QUESTIONS = [
     "Do you think it's better to be honest or kind when you can't be both?",
 ]
 
-MOD_TOKEN_ENV = "AGORA_MOD_TOKEN"  # moderator has delete permissions
+MOD_TOKEN_ENV = "AGORA_MOD_TOKEN"
+CITIZEN_B_TOKEN_ENV = "AGORA_CITIZEN_B_TOKEN"
 CITIZEN_A_ID = 1490079230191468807  # agora-citizen-a (Nova)
 CITIZEN_B_ID = 1490080381007954041  # agora-citizen-b (Rex)
 BOT_CHAT = "bot-chat"
 RESPONSE_TIMEOUT = 45
-COLLECT_EXTRA = 30  # longer window to catch volleys
+COLLECT_EXTRA = 40  # long window to catch B -> A -> B
 
 
 def _load_env(path: Path) -> None:
@@ -57,17 +59,67 @@ def _load_env(path: Path) -> None:
                 os.environ.setdefault(key.strip(), value.strip())
 
 
+async def _purge_channel(token: str, channel_name: str) -> None:
+    """Connect as moderator, delete all bot messages, disconnect."""
+    intents = discord.Intents.default()
+    intents.message_content = True
+    client = discord.Client(intents=intents)
+
+    ready = asyncio.Event()
+
+    @client.event
+    async def on_ready():
+        ready.set()
+
+    task = asyncio.create_task(client.start(token))
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=15)
+
+        channel = None
+        for guild in client.guilds:
+            for ch in guild.text_channels:
+                if ch.name == channel_name:
+                    channel = ch
+                    break
+
+        if channel:
+            deleted = 0
+            async for msg in channel.history(limit=50):
+                if msg.author.bot:
+                    try:
+                        await msg.delete()
+                        deleted += 1
+                    except (discord.Forbidden, discord.NotFound):
+                        pass
+            if deleted:
+                logger.info("Purged %d bot messages from #%s", deleted, channel_name)
+    finally:
+        await client.close()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 async def main():
     testbed_dir = Path(__file__).resolve().parent
     _load_env(testbed_dir / "citizen-a" / ".env")
     _load_env(testbed_dir / "citizen-b" / ".env")
     _load_env(testbed_dir / "moderator" / ".env")
 
-    token = os.environ.get(MOD_TOKEN_ENV)
-    if not token:
-        logger.error("%s not set", MOD_TOKEN_ENV)
+    mod_token = os.environ.get(MOD_TOKEN_ENV)
+    rex_token = os.environ.get(CITIZEN_B_TOKEN_ENV)
+    if not mod_token or not rex_token:
+        logger.error("Need both %s and %s", MOD_TOKEN_ENV, CITIZEN_B_TOKEN_ENV)
         sys.exit(1)
 
+    # Phase 1: Moderator purges channel
+    logger.info("Purging #%s via moderator...", BOT_CHAT)
+    await _purge_channel(mod_token, BOT_CHAT)
+    await asyncio.sleep(3)  # let Discord propagate
+
+    # Phase 2: Rex sends the opener
     intents = discord.Intents.default()
     intents.message_content = True
     client = discord.Client(intents=intents)
@@ -76,10 +128,11 @@ async def main():
     first_response = asyncio.Event()
     responses: list[dict] = []
     send_time = 0.0
+    last_sent_text = ""
 
     @client.event
     async def on_ready():
-        logger.info("Helper connected as %s", client.user)
+        logger.info("Rex helper connected as %s", client.user)
         ready.set()
 
     @client.event
@@ -88,7 +141,8 @@ async def main():
         if (
             msg.channel.name == BOT_CHAT
             and msg.author.bot
-            and msg.author.id != client.user.id
+            and msg.author.id in (CITIZEN_A_ID, CITIZEN_B_ID)
+            and msg.content != last_sent_text  # skip echo of our own send
         ):
             elapsed = time.time() - send_time
             responses.append({
@@ -103,7 +157,7 @@ async def main():
             )
             first_response.set()
 
-    task = asyncio.create_task(client.start(token))
+    task = asyncio.create_task(client.start(rex_token))
 
     try:
         await asyncio.wait_for(ready.wait(), timeout=15)
@@ -119,34 +173,12 @@ async def main():
             logger.error("#%s not found", BOT_CHAT)
             return
 
-        # Reset exchange cap — purge ALL recent bot messages from history
-        # The exchange cap counts consecutive bot messages in channel.history().
-        # Deleting them ensures a clean slate for the test.
-        deleted = 0
-        async for msg in channel.history(limit=50):
-            if msg.author.bot:
-                try:
-                    await msg.delete()
-                    deleted += 1
-                except (discord.Forbidden, discord.NotFound):
-                    pass
-        if deleted:
-            logger.info("Purged %d bot messages to reset exchange cap", deleted)
-        await asyncio.sleep(3)  # let Discord propagate deletions
-
-        # Verify cap is clear
-        bot_count = 0
-        async for msg in channel.history(limit=6):
-            if msg.author.bot:
-                bot_count += 1
-        if bot_count > 0:
-            logger.warning("Still %d bot messages after purge — cap may fire", bot_count)
-
-        # Rex (citizen-b) sends opener @mentioning Nova (citizen-a)
+        # Rex @mentions Nova with a random question
         question = random.choice(QUESTIONS)
         text = f"<@{CITIZEN_A_ID}> {question}"
+        last_sent_text = text
         send_time = time.time()
-        logger.info("SENDING as Rex: %s", text)
+        logger.info("REX SENDS: %s", text)
         await channel.send(text)
 
         # Wait for first response
@@ -156,7 +188,8 @@ async def main():
             logger.error("No response within %ds — is the testbed running?", RESPONSE_TIMEOUT)
             return
 
-        # Collect volleys — Nova should ask a follow-up, Rex may reply
+        # Collect volleys — Nova should ask a follow-up @mentioning Rex,
+        # Rex's running bot should respond back
         logger.info("Waiting %ds for volleys...", COLLECT_EXTRA)
         await asyncio.sleep(COLLECT_EXTRA)
 
@@ -173,10 +206,12 @@ async def main():
             print()
 
         print("-" * 60)
-        if len(responses) >= 2:
-            print(f"VOLLEY: {len(responses)} exchanges — conversation is alive")
+        if len(responses) >= 3:
+            print(f"VOLLEY: {len(responses)} exchanges — full B -> A -> B achieved!")
+        elif len(responses) >= 2:
+            print(f"VOLLEY: {len(responses)} exchanges — conversation going")
         elif len(responses) == 1:
-            print("SINGLE: Nova responded but no volley (Rex didn't get mentioned back)")
+            print("SINGLE: Nova responded but no volley (didn't @mention Rex back)")
         else:
             print("FAIL: No responses")
         print("=" * 60)
