@@ -407,9 +407,10 @@ class Agora:
                     await asyncio.sleep(jitter)
 
                 # Step 7: Typing indicator
-                with self.span("typing_indicator", enabled=self.config.typing_indicator) as s:
-                    if self.config.typing_indicator:
-                        await discord_message.channel.typing().__aenter__()
+                _typing_ctx = None
+                if self.config.typing_indicator:
+                    _typing_ctx = discord_message.channel.typing()
+                    await _typing_ctx.__aenter__()
 
                 # Step 8: Operator's generate_response
                 with self.span("generate_response") as s:
@@ -428,6 +429,12 @@ class Agora:
                         filter_step, filter_reason = "generate_response", f"exception: {e}"
                         logger.error(f"generate_response raised: {e}")
                         return
+                    finally:
+                        if _typing_ctx is not None:
+                            try:
+                                await _typing_ctx.__aexit__(None, None, None)
+                            except Exception:
+                                pass
             else:
                 # New path: on_message
                 # Step 6: Jitter delay
@@ -436,9 +443,10 @@ class Agora:
                     await asyncio.sleep(jitter)
 
                 # Step 7: Typing indicator
-                with self.span("typing_indicator", enabled=self.config.typing_indicator) as s:
-                    if self.config.typing_indicator:
-                        await discord_message.channel.typing().__aenter__()
+                _typing_ctx = None
+                if self.config.typing_indicator:
+                    _typing_ctx = discord_message.channel.typing()
+                    await _typing_ctx.__aenter__()
 
                 # Step 8: Operator's on_message
                 with self.span("on_message") as s:
@@ -467,6 +475,12 @@ class Agora:
                             response = fallback
                         else:
                             return
+                    finally:
+                        if _typing_ctx is not None:
+                            try:
+                                await _typing_ctx.__aexit__(None, None, None)
+                            except Exception:
+                                pass
 
             # Step 8.5: Resolve @name mentions to <@ID>
             with self.span("mention_resolution") as s:
