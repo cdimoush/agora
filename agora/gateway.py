@@ -44,6 +44,9 @@ class Agora:
         self._member_map: dict[str, int] = {}
         self._mention_pattern = None  # compiled regex, built in _resolve_members
         self._processors: list = []
+        self._ready_event = asyncio.Event()
+        self._run_task = None
+        self._scheduler_task = None
 
         # Detect which API the subclass uses
         self._use_legacy_api = (
@@ -246,8 +249,38 @@ class Agora:
         config = Config.from_yaml(path)
         return cls(config)
 
+    async def start(self) -> None:
+        """Start the bot (non-blocking). Returns after on_ready fires.
+
+        Must be called from within an existing event loop.
+        """
+        logger.info("Starting Agora bot...")
+        self._ready_event.clear()
+        self._run_task = asyncio.create_task(
+            self._client.start(self.config.token)
+        )
+        await self._ready_event.wait()
+
+    async def stop(self) -> None:
+        """Stop the bot and clean up."""
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()
+            self._scheduler_task = None
+        await self._client.close()
+        if self._run_task is not None:
+            self._run_task.cancel()
+            try:
+                await self._run_task
+            except asyncio.CancelledError:
+                pass
+            self._run_task = None
+
+    async def wait_until_ready(self) -> None:
+        """Block until the bot is connected and ready."""
+        await self._ready_event.wait()
+
     def run(self) -> None:
-        """Start the bot. Blocks until stopped."""
+        """Start the bot. Blocks until stopped (convenience wrapper)."""
         logger.info("Starting Agora bot...")
         self._client.run(self.config.token)
 
@@ -263,6 +296,7 @@ class Agora:
         if self.config.mention_resolution:
             self._resolve_members()
         self._check_intents()
+        self._ready_event.set()
 
     async def _on_message(self, discord_message: discord.Message) -> None:
         """Main dispatch pipeline."""
