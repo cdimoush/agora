@@ -1,4 +1,4 @@
-"""Unit tests for agora.bot — AgoraBot dispatch pipeline with mocked discord.py."""
+"""Unit tests for agora.gateway — Agora dispatch pipeline with mocked discord.py."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agora.bot import AgoraBot
+from agora.gateway import Agora as AgoraBot
 from agora.config import Config
 
 

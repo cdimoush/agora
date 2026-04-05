@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agora.bot import AgoraBot
+from agora.gateway import Agora as AgoraBot
 from agora.config import Config
 
 
