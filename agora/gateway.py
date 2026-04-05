@@ -18,6 +18,7 @@ from agora.config import Config
 from agora.errors import ErrorContext
 from agora.message import Message
 from agora.safety import ExchangeCapChecker
+from agora.scheduler import SchedulerTask, parse_interval
 from agora.telemetry import LogProcessor, Span, _NullSpan, _null_span, _trace_ctx
 
 logger = logging.getLogger("agora")
@@ -97,6 +98,14 @@ class Agora:
         Default: logs the error and returns None.
         """
         logger.error(f"on_error [{context.stage}]: {error}")
+        return None
+
+    async def on_schedule(self) -> dict[str, str] | None:
+        """Called on each schedule tick. Return {channel: message} or None.
+
+        Override this for Tier 2 (scheduled) agents. Posts go through send()
+        with cap enforcement. Default: return None (no posts).
+        """
         return None
 
     # ── Public: send/reply ────────────────────────────────────
@@ -261,6 +270,13 @@ class Agora:
         )
         await self._ready_event.wait()
 
+        # Start scheduler if configured
+        if self.config.schedule:
+            interval = parse_interval(self.config.schedule)
+            sched = SchedulerTask(interval, self._on_schedule_tick)
+            sched.start()
+            self._scheduler_task = sched
+
     async def stop(self) -> None:
         """Stop the bot and clean up."""
         if self._scheduler_task is not None:
@@ -283,6 +299,29 @@ class Agora:
         """Start the bot. Blocks until stopped (convenience wrapper)."""
         logger.info("Starting Agora bot...")
         self._client.run(self.config.token)
+
+    async def _on_schedule_tick(self) -> None:
+        """Called by the scheduler. Dispatches on_schedule results via send()."""
+        try:
+            result = await self.on_schedule()
+        except Exception as e:
+            ctx = ErrorContext(stage="on_schedule")
+            try:
+                await self.on_error(e, ctx)
+            except Exception:
+                logger.error("on_error itself raised during on_schedule — swallowing")
+            return
+
+        if not result:
+            return
+
+        for channel_name, content in result.items():
+            if not content:
+                continue
+            try:
+                await self.send(channel_name, content)
+            except Exception as e:
+                logger.error(f"on_schedule send to '{channel_name}' failed: {e}")
 
     # ── Internal: discord.py event handlers ───────────────────
 

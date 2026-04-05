@@ -31,6 +31,7 @@ class Config:
     mention_aliases: dict[str, str] = field(default_factory=dict)
 
     exchange_cap: int = 5
+    schedule: str | None = None
 
     jitter_seconds: tuple[float, float] = (1.0, 3.0)
     typing_indicator: bool = True
@@ -83,6 +84,13 @@ class Config:
 
         if self.max_response_length < 1:
             raise ConfigError("max_response_length must be >= 1")
+
+        if self.schedule is not None:
+            from agora.scheduler import parse_interval
+            try:
+                parse_interval(self.schedule)
+            except ValueError as e:
+                raise ConfigError(str(e))
 
         if self.respond_mode not in _VALID_RESPOND_MODES:
             raise ConfigError(
