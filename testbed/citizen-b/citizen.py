@@ -46,12 +46,14 @@ class CitizenBot(Agora):
             history_lines.append(f"{msg.author.display_name}: {msg.content}")
         history_lines.reverse()
 
-        # Collect unique names from history for roster
+        # Collect unique names from history + mentioned users for roster
         names_in_channel = set()
         for line in history_lines:
             name = line.split(":")[0]
             names_in_channel.add(name)
         names_in_channel.add(message.author_name)
+        for user in message._msg.mentions:
+            names_in_channel.add(user.display_name)
 
         prompt = f"Channel: #{message.channel_name}\n"
         prompt += f"People here: {', '.join(sorted(names_in_channel))}\n\n"
