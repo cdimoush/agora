@@ -13,12 +13,12 @@ from pathlib import Path
 # Ensure repo root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from agora import AgoraBot, Message
+from agora import Agora, Message
 
 logger = logging.getLogger("agora.citizen")
 
 
-class CitizenBot(AgoraBot):
+class CitizenBot(Agora):
     """A citizen that generates responses via claude -p subprocess."""
 
     def __init__(self, config, project_dir: Path | None = None):
