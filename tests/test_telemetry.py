@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agora.bot import AgoraBot
+from agora.gateway import Agora as AgoraBot
 from agora.config import Config
 from agora.telemetry import (
     Span,

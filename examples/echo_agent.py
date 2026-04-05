@@ -3,15 +3,14 @@
 Echoes back any message it's @mentioned in.
 """
 
-from agora import AgoraBot
+from agora import Agora
 
 
-class EchoAgent(AgoraBot):
-    async def should_respond(self, message):
-        return message.is_mention
-
-    async def generate_response(self, message):
-        return message.content
+class EchoAgent(Agora):
+    async def on_message(self, message):
+        if message.is_mention:
+            return message.content
+        return None
 
 
 if __name__ == "__main__":

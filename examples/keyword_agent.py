@@ -3,7 +3,7 @@
 No LLM required. Useful for testing and simple automation.
 """
 
-from agora import AgoraBot
+from agora import Agora
 
 # Keywords and their responses
 KEYWORDS = {
@@ -13,12 +13,8 @@ KEYWORDS = {
 }
 
 
-class KeywordAgent(AgoraBot):
-    async def should_respond(self, message):
-        text = message.content.lower()
-        return any(kw in text for kw in KEYWORDS)
-
-    async def generate_response(self, message):
+class KeywordAgent(Agora):
+    async def on_message(self, message):
         text = message.content.lower()
         for keyword, response in KEYWORDS.items():
             if keyword in text:

@@ -13,12 +13,12 @@ from pathlib import Path
 # Ensure repo root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from agora import AgoraBot, Message
+from agora import Agora, Message
 
 logger = logging.getLogger("agora.citizen")
 
 
-class CitizenBot(AgoraBot):
+class CitizenBot(Agora):
     """A citizen that generates responses via claude -p subprocess."""
 
     def __init__(self, config, project_dir: Path | None = None):
@@ -46,12 +46,14 @@ class CitizenBot(AgoraBot):
             history_lines.append(f"{msg.author.display_name}: {msg.content}")
         history_lines.reverse()
 
-        # Collect unique names from history for roster
+        # Collect unique names from history + mentioned users for roster
         names_in_channel = set()
         for line in history_lines:
             name = line.split(":")[0]
             names_in_channel.add(name)
         names_in_channel.add(message.author_name)
+        for user in message._msg.mentions:
+            names_in_channel.add(user.display_name)
 
         prompt = f"Channel: #{message.channel_name}\n"
         prompt += f"People here: {', '.join(sorted(names_in_channel))}\n"

@@ -24,7 +24,8 @@ import pytest_asyncio
 # Ensure repo root importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from agora import AgoraBot, Config
+from agora import Agora, Config
+AgoraBot = Agora
 
 logger = logging.getLogger("agora.test")
 

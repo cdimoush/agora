@@ -9,12 +9,12 @@ from pathlib import Path
 # Ensure repo root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from agora import AgoraBot, Message
+from agora import Agora, Message
 
 logger = logging.getLogger("agora.moderator")
 
 
-class ModeratorBot(AgoraBot):
+class ModeratorBot(Agora):
     """Server-side observer. Watches for exchange cap violations, warns in mod-log."""
 
     async def should_respond(self, message: Message) -> bool:
