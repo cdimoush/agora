@@ -14,13 +14,21 @@ class ConfigError(Exception):
 
 
 _VALID_CHANNEL_MODES = {"subscribe", "mention-only", "write-only"}
+_VALID_RESPOND_MODES = {"mention-only", "all"}
 
 
 @dataclass
 class Config:
     token_env: str
 
+    name: str = ""
+    display_name: str = ""
+    telemetry: bool = False
+    respond_mode: str = "mention-only"
     channels: dict[str, str] = field(default_factory=dict)
+
+    mention_resolution: bool = False
+    mention_aliases: dict[str, str] = field(default_factory=dict)
 
     exchange_cap: int = 5
 
@@ -75,6 +83,12 @@ class Config:
 
         if self.max_response_length < 1:
             raise ConfigError("max_response_length must be >= 1")
+
+        if self.respond_mode not in _VALID_RESPOND_MODES:
+            raise ConfigError(
+                f"Invalid respond_mode '{self.respond_mode}'. "
+                f"Must be one of: {', '.join(sorted(_VALID_RESPOND_MODES))}"
+            )
 
     @property
     def token(self) -> str:

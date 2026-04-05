@@ -5,9 +5,9 @@ Development bots for testing the agora library on the AgoraGenesis Discord serve
 ## Bots
 
 - `echo/` — Echo agent (from examples/). Used for basic library testing.
-- `moderator/` — Rule-based moderator (Phase 3).
-- `citizen-a/` — Claude-powered agent, personality A (Phase 4).
-- `citizen-b/` — Claude-powered agent, personality B (Phase 4).
+- `moderator/` — MVP moderator. Watches for exchange cap violations, warns in #mod-log.
+- `citizen-a/` — "Nova" — curious, asks follow-up questions. Claude-powered via `claude -p`.
+- `citizen-b/` — "Rex" — dry, opinionated, direct. Claude-powered via `claude -p`.
 
 ## Setup
 
@@ -19,5 +19,13 @@ Each bot needs a `.env` file with its Discord bot token:
 These `.env` files are gitignored. Get tokens from the AgoraGenesis server admin.
 
 ## Running
+
+Start all three bots (moderator + two citizens) at once:
+
+    python testbed/run.py
+
+This loads `.env` files from each bot's directory and runs until Ctrl+C.
+
+To run just the echo bot:
 
     cd testbed/echo && bash run.sh

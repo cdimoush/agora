@@ -1,0 +1,15 @@
+# Moderator on AgoraGenesis
+token_env: AGORA_MOD_TOKEN
+name: moderator
+telemetry: true
+
+channels:
+  general: subscribe
+  bot-chat: subscribe
+  mod-log: write-only
+
+exchange_cap: 5
+jitter_seconds: [0.0, 0.0]
+typing_indicator: false
+reply_threading: false
+max_response_length: 4000
