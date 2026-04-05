@@ -86,6 +86,60 @@ class Agora:
         """
         return None
 
+    # ── Public: send/reply ────────────────────────────────────
+
+    async def send(self, channel: str, content: str) -> None:
+        """Send a message to a named channel. Enforces exchange cap.
+
+        Raises ValueError if channel is not in config.
+        Logs warning and skips cap check for write-only channels.
+        """
+        mode = self.config.channels.get(channel)
+        if mode is None:
+            available = ", ".join(sorted(self.config.channels.keys()))
+            raise ValueError(
+                f"Channel '{channel}' not in config. Available: {available}"
+            )
+
+        discord_channel = self._get_discord_channel(channel)
+
+        if mode == "write-only":
+            logger.warning(f"send() to write-only channel '{channel}' — skipping cap check")
+        else:
+            if await self._exchange_cap.is_capped(discord_channel):
+                logger.info(f"send() to '{channel}' suppressed by exchange cap")
+                return
+
+        content = content[: self.config.max_response_length]
+        chunks = chunk_message(content)
+        for chunk in chunks:
+            await discord_channel.send(chunk)
+
+    async def reply(self, message: Message, content: str) -> None:
+        """Reply to a message. Always threads. Enforces exchange cap."""
+        discord_channel = self._client.get_channel(message.channel_id)
+        if discord_channel is None:
+            raise ValueError(f"Cannot resolve channel ID {message.channel_id}")
+
+        if await self._exchange_cap.is_capped(discord_channel):
+            logger.info(f"reply() suppressed by exchange cap in #{message.channel_name}")
+            return
+
+        content = content[: self.config.max_response_length]
+        chunks = chunk_message(content)
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await message._msg.reply(chunk, mention_author=False)
+            else:
+                await discord_channel.send(chunk)
+
+    def _get_discord_channel(self, channel_name: str):
+        """Resolve channel name to discord channel object."""
+        channel_id = self._channel_ids.get(channel_name)
+        if channel_id is None:
+            raise ValueError(f"Channel '{channel_name}' not resolved — is the bot connected?")
+        return self._client.get_channel(channel_id)
+
     # ── Public: telemetry ──────────────────────────────────────
 
     def add_processor(self, processor) -> None:
