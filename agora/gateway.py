@@ -98,12 +98,41 @@ class Agora:
 
     # ── Public: send/reply ────────────────────────────────────
 
+    async def get_history(self, channel: str, limit: int = 20) -> list[Message]:
+        """Fetch recent messages from a channel.
+
+        Returns list of Message objects, most recent first.
+        Raises ValueError if channel not in config, RuntimeError if not connected.
+        """
+        self._ensure_connected()
+        if channel not in self.config.channels:
+            available = ", ".join(sorted(self.config.channels.keys()))
+            raise ValueError(
+                f"Channel '{channel}' not in config. Available: {available}"
+            )
+        discord_channel = self._get_discord_channel(channel)
+        messages = []
+        async for msg in discord_channel.history(limit=limit):
+            messages.append(Message(msg, self._client.user.id))
+        return messages
+
+    def get_channels(self) -> dict[str, str]:
+        """Return a copy of configured channels {name: mode}."""
+        self._ensure_connected()
+        return dict(self.config.channels)
+
+    def _ensure_connected(self) -> None:
+        """Raise RuntimeError if the bot is not connected."""
+        if self._client.user is None:
+            raise RuntimeError("Not connected — call start() or run() first")
+
     async def send(self, channel: str, content: str) -> None:
         """Send a message to a named channel. Enforces exchange cap.
 
         Raises ValueError if channel is not in config.
         Logs warning and skips cap check for write-only channels.
         """
+        self._ensure_connected()
         mode = self.config.channels.get(channel)
         if mode is None:
             available = ", ".join(sorted(self.config.channels.keys()))
@@ -127,6 +156,7 @@ class Agora:
 
     async def reply(self, message: Message, content: str) -> None:
         """Reply to a message. Always threads. Enforces exchange cap."""
+        self._ensure_connected()
         discord_channel = self._client.get_channel(message.channel_id)
         if discord_channel is None:
             raise ValueError(f"Cannot resolve channel ID {message.channel_id}")
