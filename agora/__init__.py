@@ -7,6 +7,7 @@ import warnings
 __version__ = "0.1.0"
 
 from agora.config import Config
+from agora.errors import ErrorContext
 from agora.message import Message
 from agora.gateway import Agora
 from agora.telemetry import (
@@ -33,6 +34,7 @@ __all__ = [
     "Agora",
     "AgoraBot",
     "Config",
+    "ErrorContext",
     "Message",
     "Span",
     "TelemetryProcessor",

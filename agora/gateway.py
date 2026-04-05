@@ -15,6 +15,7 @@ import discord
 
 from agora.chunker import chunk_message
 from agora.config import Config
+from agora.errors import ErrorContext
 from agora.message import Message
 from agora.safety import ExchangeCapChecker
 from agora.telemetry import LogProcessor, Span, _NullSpan, _null_span, _trace_ctx
@@ -84,6 +85,15 @@ class Agora:
         Override this in subclasses (preferred over should_respond + generate_response).
         Default: return None (no response).
         """
+        return None
+
+    async def on_error(self, error: Exception, context: ErrorContext) -> str | None:
+        """Called when on_message (or on_schedule) raises an exception.
+
+        Return a string to send as reply, or None for silent handling.
+        Default: logs the error and returns None.
+        """
+        logger.error(f"on_error [{context.stage}]: {error}")
         return None
 
     # ── Public: send/reply ────────────────────────────────────
@@ -343,7 +353,17 @@ class Agora:
                         s["error"] = str(e)
                         filter_step, filter_reason = "on_message", f"exception: {e}"
                         logger.error(f"on_message raised: {e}")
-                        return
+                        # Route to on_error
+                        ctx = ErrorContext(stage="on_message", message=message)
+                        try:
+                            fallback = await self.on_error(e, ctx)
+                        except Exception:
+                            logger.error("on_error itself raised — swallowing")
+                            return
+                        if fallback is not None:
+                            response = fallback
+                        else:
+                            return
 
             # Step 8.5: Resolve @name mentions to <@ID>
             with self.span("mention_resolution") as s:
