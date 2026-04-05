@@ -44,6 +44,11 @@ class Agora:
         self._mention_pattern = None  # compiled regex, built in _resolve_members
         self._processors: list = []
 
+        # Detect which API the subclass uses
+        self._use_legacy_api = (
+            type(self).on_message is Agora.on_message
+        )
+
         if config.telemetry:
             self._setup_telemetry()
 
@@ -71,6 +76,14 @@ class Agora:
 
     async def generate_response(self, message: Message) -> str | None:
         """Return response text or None. Called only when should_respond() is True."""
+        return None
+
+    async def on_message(self, message: Message) -> str | None:
+        """Handle an incoming message. Return response text or None.
+
+        Override this in subclasses (preferred over should_respond + generate_response).
+        Default: return None (no response).
+        """
         return None
 
     # ── Public: telemetry ──────────────────────────────────────
@@ -201,51 +214,82 @@ class Agora:
                     return
                 s["decision"] = "pass"
 
-            # Step 5: Operator's should_respond
-            with self.span("should_respond") as s:
-                try:
-                    result = await self.should_respond(message)
-                    s["result"] = result
-                    if not result:
-                        s["decision"] = "filtered"
-                        s["reason"] = "should_respond returned False"
-                        filter_step, filter_reason = "should_respond", s["reason"]
+            if self._use_legacy_api:
+                # Legacy path: should_respond + generate_response
+                # Step 5: Operator's should_respond
+                with self.span("should_respond") as s:
+                    try:
+                        result = await self.should_respond(message)
+                        s["result"] = result
+                        if not result:
+                            s["decision"] = "filtered"
+                            s["reason"] = "should_respond returned False"
+                            filter_step, filter_reason = "should_respond", s["reason"]
+                            return
+                        s["decision"] = "pass"
+                    except Exception as e:
+                        s["decision"] = "error"
+                        s["error"] = str(e)
+                        filter_step, filter_reason = "should_respond", f"exception: {e}"
+                        logger.error(f"should_respond raised: {e}")
                         return
-                    s["decision"] = "pass"
-                except Exception as e:
-                    s["decision"] = "error"
-                    s["error"] = str(e)
-                    filter_step, filter_reason = "should_respond", f"exception: {e}"
-                    logger.error(f"should_respond raised: {e}")
-                    return
 
-            # Step 6: Jitter delay
-            jitter = random.uniform(*self.config.jitter_seconds)
-            with self.span("jitter_delay", jitter_seconds=jitter):
-                await asyncio.sleep(jitter)
+                # Step 6: Jitter delay
+                jitter = random.uniform(*self.config.jitter_seconds)
+                with self.span("jitter_delay", jitter_seconds=jitter):
+                    await asyncio.sleep(jitter)
 
-            # Step 7: Typing indicator
-            with self.span("typing_indicator", enabled=self.config.typing_indicator) as s:
-                if self.config.typing_indicator:
-                    await discord_message.channel.typing().__aenter__()
+                # Step 7: Typing indicator
+                with self.span("typing_indicator", enabled=self.config.typing_indicator) as s:
+                    if self.config.typing_indicator:
+                        await discord_message.channel.typing().__aenter__()
 
-            # Step 8: Operator's generate_response
-            with self.span("generate_response") as s:
-                try:
-                    response = await self.generate_response(message)
-                    if response is None:
-                        s["decision"] = "filtered"
-                        s["reason"] = "generate_response returned None"
-                        filter_step, filter_reason = "generate_response", s["reason"]
+                # Step 8: Operator's generate_response
+                with self.span("generate_response") as s:
+                    try:
+                        response = await self.generate_response(message)
+                        if response is None:
+                            s["decision"] = "filtered"
+                            s["reason"] = "generate_response returned None"
+                            filter_step, filter_reason = "generate_response", s["reason"]
+                            return
+                        s["decision"] = "pass"
+                        s["response_length"] = len(response)
+                    except Exception as e:
+                        s["decision"] = "error"
+                        s["error"] = str(e)
+                        filter_step, filter_reason = "generate_response", f"exception: {e}"
+                        logger.error(f"generate_response raised: {e}")
                         return
-                    s["decision"] = "pass"
-                    s["response_length"] = len(response)
-                except Exception as e:
-                    s["decision"] = "error"
-                    s["error"] = str(e)
-                    filter_step, filter_reason = "generate_response", f"exception: {e}"
-                    logger.error(f"generate_response raised: {e}")
-                    return
+            else:
+                # New path: on_message
+                # Step 6: Jitter delay
+                jitter = random.uniform(*self.config.jitter_seconds)
+                with self.span("jitter_delay", jitter_seconds=jitter):
+                    await asyncio.sleep(jitter)
+
+                # Step 7: Typing indicator
+                with self.span("typing_indicator", enabled=self.config.typing_indicator) as s:
+                    if self.config.typing_indicator:
+                        await discord_message.channel.typing().__aenter__()
+
+                # Step 8: Operator's on_message
+                with self.span("on_message") as s:
+                    try:
+                        response = await self.on_message(message)
+                        if response is None:
+                            s["decision"] = "filtered"
+                            s["reason"] = "on_message returned None"
+                            filter_step, filter_reason = "on_message", s["reason"]
+                            return
+                        s["decision"] = "pass"
+                        s["response_length"] = len(response)
+                    except Exception as e:
+                        s["decision"] = "error"
+                        s["error"] = str(e)
+                        filter_step, filter_reason = "on_message", f"exception: {e}"
+                        logger.error(f"on_message raised: {e}")
+                        return
 
             # Step 8.5: Resolve @name mentions to <@ID>
             with self.span("mention_resolution") as s:

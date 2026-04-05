@@ -401,6 +401,139 @@ class TestExchangeCapPipeline:
         assert sr_called == [True]
 
 
+class TestOnMessageAPI:
+    """Tests for the new on_message API (replaces should_respond + generate_response)."""
+
+    @pytest.mark.asyncio
+    async def test_on_message_returns_response(self):
+        """New API: on_message returning a string sends it."""
+        from agora.gateway import Agora
+
+        class NewAgent(Agora):
+            async def on_message(self, message):
+                return "new api reply"
+
+        cfg = _make_config()
+        bot = NewAgent(cfg)
+        mock_client = MagicMock()
+        mock_client.user = SimpleNamespace(id=BOT_USER_ID)
+        mock_client.guilds = []
+        bot._client = mock_client
+        bot._channel_map = {name: mode for name, mode in cfg.channels.items()}
+        bot._channel_ids = {name: i for i, name in enumerate(cfg.channels)}
+
+        msg = _make_discord_msg(channel_name="general")
+        await bot._on_message(msg)
+        msg.reply.assert_called_once_with("new api reply", mention_author=False)
+
+    @pytest.mark.asyncio
+    async def test_on_message_returns_none(self):
+        """New API: on_message returning None sends nothing."""
+        from agora.gateway import Agora
+
+        class SilentAgent(Agora):
+            async def on_message(self, message):
+                return None
+
+        cfg = _make_config()
+        bot = SilentAgent(cfg)
+        mock_client = MagicMock()
+        mock_client.user = SimpleNamespace(id=BOT_USER_ID)
+        mock_client.guilds = []
+        bot._client = mock_client
+        bot._channel_map = {name: mode for name, mode in cfg.channels.items()}
+        bot._channel_ids = {name: i for i, name in enumerate(cfg.channels)}
+
+        msg = _make_discord_msg(channel_name="general")
+        await bot._on_message(msg)
+        msg.reply.assert_not_called()
+        msg.channel.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_message_exception_swallowed(self):
+        """New API: on_message raising does not crash the pipeline."""
+        from agora.gateway import Agora
+
+        class BadAgent(Agora):
+            async def on_message(self, message):
+                raise RuntimeError("new api boom")
+
+        cfg = _make_config()
+        bot = BadAgent(cfg)
+        mock_client = MagicMock()
+        mock_client.user = SimpleNamespace(id=BOT_USER_ID)
+        mock_client.guilds = []
+        bot._client = mock_client
+        bot._channel_map = {name: mode for name, mode in cfg.channels.items()}
+        bot._channel_ids = {name: i for i, name in enumerate(cfg.channels)}
+
+        msg = _make_discord_msg(channel_name="general")
+        await bot._on_message(msg)
+        msg.reply.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_api_still_works(self):
+        """Legacy API: should_respond + generate_response still dispatches."""
+        bot = _make_bot()
+
+        async def sr(m):
+            return True
+
+        async def gr(m):
+            return "legacy reply"
+
+        bot.should_respond = sr
+        bot.generate_response = gr
+        msg = _make_discord_msg(channel_name="general")
+        await bot._on_message(msg)
+        msg.reply.assert_called_once_with("legacy reply", mention_author=False)
+
+    @pytest.mark.asyncio
+    async def test_on_message_wins_when_both_overridden(self):
+        """When both APIs overridden, on_message takes precedence."""
+        from agora.gateway import Agora
+
+        class HybridAgent(Agora):
+            async def should_respond(self, message):
+                return True
+
+            async def generate_response(self, message):
+                return "legacy"
+
+            async def on_message(self, message):
+                return "new"
+
+        cfg = _make_config()
+        bot = HybridAgent(cfg)
+        mock_client = MagicMock()
+        mock_client.user = SimpleNamespace(id=BOT_USER_ID)
+        mock_client.guilds = []
+        bot._client = mock_client
+        bot._channel_map = {name: mode for name, mode in cfg.channels.items()}
+        bot._channel_ids = {name: i for i, name in enumerate(cfg.channels)}
+
+        msg = _make_discord_msg(channel_name="general")
+        await bot._on_message(msg)
+        msg.reply.assert_called_once_with("new", mention_author=False)
+
+    def test_method_detection_legacy(self):
+        """Base Agora with no overrides uses legacy API."""
+        from agora.gateway import Agora
+        bot = Agora(_make_config())
+        assert bot._use_legacy_api is True
+
+    def test_method_detection_new(self):
+        """Subclass overriding on_message uses new API."""
+        from agora.gateway import Agora
+
+        class NewAgent(Agora):
+            async def on_message(self, message):
+                return "hi"
+
+        bot = NewAgent(_make_config())
+        assert bot._use_legacy_api is False
+
+
 class TestFromConfig:
     def test_returns_correct_subclass(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MY_TOK", "fake-token")
