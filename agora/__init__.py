@@ -7,6 +7,15 @@ import warnings
 __version__ = "0.1.0"
 
 from agora.config import Config
+from agora.context import (
+    ContextError,
+    ContainerCrashed,
+    ExecResult,
+    ExecutionContext,
+    ImageBuildError,
+    LocalContext,
+    RuntimeNotFound,
+)
 from agora.errors import ErrorContext
 from agora.message import Message
 from agora.gateway import Agora
@@ -34,8 +43,15 @@ __all__ = [
     "Agora",
     "AgoraBot",
     "Config",
+    "ContextError",
+    "ContainerCrashed",
     "ErrorContext",
+    "ExecResult",
+    "ExecutionContext",
+    "ImageBuildError",
+    "LocalContext",
     "Message",
+    "RuntimeNotFound",
     "Span",
     "TelemetryProcessor",
     "LogProcessor",
