@@ -45,6 +45,48 @@ export DISCORD_BOT_TOKEN="your-token-here"
 python agent.py
 """
 
+CONTAINER_AGENT_YAML_TEMPLATE = """\
+# %(name)s configuration
+token_env: DISCORD_BOT_TOKEN
+
+channels:
+  general: mention-only
+
+context:
+  backend: container
+"""
+
+DOCKERFILE_TEMPLATE = """\
+FROM python:3.12-slim
+RUN pip install agora
+WORKDIR /agent
+COPY . .
+CMD ["python", "agent.py"]
+"""
+
+ENV_EXAMPLE_TEMPLATE = """\
+# Copy to .env and fill in values
+DISCORD_BOT_TOKEN=your-token-here
+# Add LLM API keys below
+"""
+
+GITIGNORE_TEMPLATE = """\
+.env
+__pycache__/
+*.pyc
+"""
+
+CONTAINER_RUN_SH_TEMPLATE = """\
+#!/usr/bin/env bash
+# Start %(name)s
+set -euo pipefail
+if command -v agora &>/dev/null; then
+    agora run "$@"
+else
+    python agent.py
+fi
+"""
+
 
 def _slugify(name: str) -> str:
     """Convert a name to a safe directory/module identifier."""
@@ -60,7 +102,7 @@ def _to_class_name(slug: str) -> str:
     return "".join(part.capitalize() for part in re.split(r"[-_]", slug) if part)
 
 
-def init_agent(name: str, base_dir: Path | None = None) -> Path:
+def init_agent(name: str, base_dir: Path | None = None, container: bool = False) -> Path:
     """Create a new agent project directory with starter files.
 
     Returns the path to the created directory.
@@ -80,11 +122,22 @@ def init_agent(name: str, base_dir: Path | None = None) -> Path:
     ctx = {"name": slug, "class_name": class_name}
 
     (project_dir / "agent.py").write_text(AGENT_PY_TEMPLATE % ctx)
-    (project_dir / "agent.yaml").write_text(AGENT_YAML_TEMPLATE % ctx)
 
-    run_sh = project_dir / "run.sh"
-    run_sh.write_text(RUN_SH_TEMPLATE % ctx)
-    run_sh.chmod(run_sh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    if container:
+        (project_dir / "agent.yaml").write_text(CONTAINER_AGENT_YAML_TEMPLATE % ctx)
+        (project_dir / "Dockerfile").write_text(DOCKERFILE_TEMPLATE)
+        (project_dir / ".env.example").write_text(ENV_EXAMPLE_TEMPLATE)
+        (project_dir / ".gitignore").write_text(GITIGNORE_TEMPLATE)
+
+        run_sh = project_dir / "run.sh"
+        run_sh.write_text(CONTAINER_RUN_SH_TEMPLATE % ctx)
+        run_sh.chmod(run_sh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    else:
+        (project_dir / "agent.yaml").write_text(AGENT_YAML_TEMPLATE % ctx)
+
+        run_sh = project_dir / "run.sh"
+        run_sh.write_text(RUN_SH_TEMPLATE % ctx)
+        run_sh.chmod(run_sh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     return project_dir
 
@@ -193,6 +246,7 @@ def main(argv: list[str] | None = None) -> None:
 
     init_parser = sub.add_parser("init", help="Create a new agent project")
     init_parser.add_argument("name", help="Name for the new agent project")
+    init_parser.add_argument("--container", action="store_true", help="Generate container files (Dockerfile, .env.example, etc.)")
 
     run_parser = sub.add_parser("run", help="Run an agent from its config")
     run_parser.add_argument("--config", default="agent.yaml", help="Path to agent.yaml")
@@ -203,7 +257,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "init":
         try:
-            path = init_agent(args.name)
+            path = init_agent(args.name, container=args.container)
             print(f"Created agent project at {path}")
         except (FileExistsError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
