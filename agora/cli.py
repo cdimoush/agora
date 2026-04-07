@@ -12,17 +12,15 @@ from pathlib import Path
 AGENT_PY_TEMPLATE = '''\
 """%(name)s — an Agora agent."""
 
-from agora import AgoraBot
+from agora import Agora
 
 
-class %(class_name)s(AgoraBot):
-    async def should_respond(self, message):
-        # Return True to trigger generate_response for this message.
-        return message.is_mention
-
-    async def generate_response(self, message):
+class %(class_name)s(Agora):
+    async def on_message(self, message):
         # Return a string to post as a reply, or None to stay silent.
-        return f"Hello {message.author_name}, you said: {message.content}"
+        if message.is_mention:
+            return f"Hello {message.author_name}, you said: {message.content}"
+        return None
 
 
 if __name__ == "__main__":
@@ -36,13 +34,6 @@ token_env: DISCORD_BOT_TOKEN
 
 channels:
   general: mention-only
-
-exchange_cap: 5
-
-jitter_seconds: [1.0, 3.0]
-typing_indicator: true
-reply_threading: true
-max_response_length: 4000
 """
 
 RUN_SH_TEMPLATE = """\

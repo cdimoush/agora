@@ -334,7 +334,6 @@ class Agora:
             await self._set_display_name()
         if self.config.mention_resolution:
             self._resolve_members()
-        self._check_intents()
         self._ready_event.set()
 
     async def _on_message(self, discord_message: discord.Message) -> None:
@@ -618,5 +617,3 @@ class Agora:
         self.add_processor(LogProcessor(logger_name=f"agora.telemetry.{bot_name}"))
         logger.info("Telemetry enabled → %s", log_file)
 
-    def _check_intents(self) -> None:
-        self._intent_warned = False

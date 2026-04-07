@@ -50,9 +50,6 @@ class Config:
         if "token_env" not in raw:
             raise ConfigError("token_env is required")
 
-        # Silently consume rate_limit for backward compatibility
-        raw.pop("rate_limit", None)
-
         # Normalise jitter_seconds from list to tuple
         jitter = raw.pop("jitter_seconds", None)
         if jitter is not None:

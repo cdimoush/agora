@@ -17,12 +17,11 @@ logger = logging.getLogger("agora.moderator")
 class ModeratorBot(Agora):
     """Server-side observer. Watches for exchange cap violations, warns in mod-log."""
 
-    async def should_respond(self, message: Message) -> bool:
-        """Monitor all bot messages."""
-        return message.is_agent
+    async def on_message(self, message: Message) -> str | None:
+        """Monitor all bot messages for exchange cap violations."""
+        if not message.is_agent:
+            return None
 
-    async def generate_response(self, message: Message) -> str | None:
-        """Check exchange cap. If violated, warn in mod-log. Return None always."""
         channel = self._client.get_channel(message.channel_id)
         if channel is None:
             return None
