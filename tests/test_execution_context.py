@@ -418,3 +418,94 @@ class TestInitContainer:
         assert (path / "run.sh").exists()
         assert not (path / "Dockerfile").exists()
         assert not (path / ".env.example").exists()
+
+
+# ---------------------------------------------------------------------------
+# Config validation — unknown keys
+# ---------------------------------------------------------------------------
+
+class TestConfigValidation:
+    """Tests for Config.from_yaml unknown key rejection."""
+
+    def test_unknown_key_raises_config_error(self, tmp_path):
+        from agora.config import Config, ConfigError
+        cfg_file = tmp_path / "agent.yaml"
+        cfg_file.write_text("token_env: MY_TOKEN\ntypo_field: oops\n")
+        with pytest.raises(ConfigError, match="Unknown config key.*typo_field"):
+            Config.from_yaml(cfg_file)
+
+    def test_multiple_unknown_keys_listed(self, tmp_path):
+        from agora.config import Config, ConfigError
+        cfg_file = tmp_path / "agent.yaml"
+        cfg_file.write_text("token_env: MY_TOKEN\nbad1: x\nbad2: y\n")
+        with pytest.raises(ConfigError, match="bad1.*bad2|bad2.*bad1"):
+            Config.from_yaml(cfg_file)
+
+
+# ---------------------------------------------------------------------------
+# detect_runtime timeout
+# ---------------------------------------------------------------------------
+
+class TestDetectRuntimeTimeout:
+    """Tests for detect_runtime timeout handling."""
+
+    @pytest.mark.asyncio
+    async def test_detect_runtime_skips_hanging_runtime(self):
+        """A runtime whose 'info' hangs should be skipped, not block forever."""
+        hung = AsyncMock()
+        hung.wait = AsyncMock(side_effect=asyncio.TimeoutError)
+        hung.kill = MagicMock()
+
+        ok_proc = AsyncMock()
+        ok_proc.wait = AsyncMock(return_value=0)
+
+        call_count = 0
+
+        async def fake_exec(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return hung  # first candidate hangs
+            return ok_proc  # second succeeds
+
+        with patch("shutil.which", return_value="/usr/bin/fake"), \
+             patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("asyncio.wait_for", side_effect=[asyncio.TimeoutError, 0]):
+            from agora.context import detect_runtime, _RUNTIMES
+            # Reset to test both candidates
+            rt = await detect_runtime()
+            assert rt in _RUNTIMES
+
+
+# ---------------------------------------------------------------------------
+# ContainerContext env_file resolution
+# ---------------------------------------------------------------------------
+
+class TestContainerEnvFileResolution:
+    """Tests that env_file is resolved relative to build_path."""
+
+    @pytest.mark.asyncio
+    async def test_env_file_resolved_relative_to_build_path(self, tmp_path):
+        """env_file should be found relative to build_path, not CWD."""
+        build_dir = tmp_path / "my-agent"
+        build_dir.mkdir()
+        (build_dir / ".env").write_text("DISCORD_BOT_TOKEN=test\n")
+
+        ctx = ContainerContext(
+            image="test",
+            runtime="docker",
+            build_path=str(build_dir),
+        )
+        # Inspect the start() command construction by mocking subprocess
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"abc123\n", b""))
+        proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+            await ctx.start()
+            # Check that --env-file was passed with the resolved path
+            call_args = mock_exec.call_args[0]
+            assert "--env-file" in call_args
+            env_idx = list(call_args).index("--env-file")
+            env_path = call_args[env_idx + 1]
+            assert str(build_dir) in env_path

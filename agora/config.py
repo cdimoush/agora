@@ -76,6 +76,15 @@ class Config:
             raw["context_runtime"] = context.get("runtime")
             raw["context_image"] = context.get("image")
 
+        # Filter to known fields to catch typos early
+        known_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        unknown = set(raw) - known_fields
+        if unknown:
+            raise ConfigError(
+                f"Unknown config key(s): {', '.join(sorted(unknown))}. "
+                f"Check for typos in agent.yaml."
+            )
+
         config = cls(**raw)
         config._validate()
         return config

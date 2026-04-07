@@ -145,7 +145,7 @@ def init_agent(name: str, base_dir: Path | None = None, container: bool = False)
 def run_agent(config_path: str = "agent.yaml", runtime_override: str | None = None, rebuild: bool = False) -> None:
     """Run an agent based on its agent.yaml configuration."""
     from agora.config import Config, ConfigError
-    from agora.context import ContainerContext, RuntimeNotFound
+    from agora.context import ContainerContext, ContainerCrashed, ContextError, RuntimeNotFound
 
     cfg_path = Path(config_path)
     if not cfg_path.exists():
@@ -191,7 +191,7 @@ def run_agent(config_path: str = "agent.yaml", runtime_override: str | None = No
             print(f"Building image '{image}' with {rt}...")
             try:
                 await ctx.build_image(no_cache=rebuild)
-            except Exception as e:
+            except (ContextError, OSError) as e:
                 print(f"Error building image: {e}", file=sys.stderr)
                 return 1
 
@@ -199,7 +199,7 @@ def run_agent(config_path: str = "agent.yaml", runtime_override: str | None = No
             print(f"Starting container...")
             try:
                 container_id = await ctx.start()
-            except Exception as e:
+            except (ContextError, OSError) as e:
                 print(f"Error starting container: {e}", file=sys.stderr)
                 return 1
 
@@ -216,27 +216,45 @@ def run_agent(config_path: str = "agent.yaml", runtime_override: str | None = No
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await wait_proc.communicate()
+            try:
+                stdout, _ = await wait_proc.communicate()
+            except asyncio.CancelledError:
+                wait_proc.terminate()
+                log_proc.terminate()
+                print("\nStopping container...")
+                await ctx.stop()
+                return 130
+
             log_proc.terminate()
 
             exit_code_str = stdout.decode().strip()
             try:
-                return int(exit_code_str)
+                exit_code = int(exit_code_str)
             except ValueError:
-                return 0
+                exit_code = 1
+
+            if exit_code != 0:
+                # OOM-kill = 137, SIGKILL = 137, SIGSEGV = 139
+                raise ContainerCrashed(
+                    f"Container exited with code {exit_code}"
+                )
+            return exit_code
 
         loop = asyncio.new_event_loop()
 
-        # Handle signals
-        def _shutdown(signum, frame):
-            print("\nStopping container...")
-            loop.run_until_complete(ctx.stop())
-            sys.exit(130)
+        # Handle signals — schedule cancellation instead of blocking
+        def _signal_handler() -> None:
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
 
-        signal.signal(signal.SIGINT, _shutdown)
-        signal.signal(signal.SIGTERM, _shutdown)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _signal_handler)
 
-        exit_code = loop.run_until_complete(_run_container())
+        try:
+            exit_code = loop.run_until_complete(_run_container())
+        except ContainerCrashed as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
         sys.exit(exit_code)
 
 

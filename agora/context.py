@@ -165,7 +165,11 @@ async def detect_runtime() -> str:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        rc = await proc.wait()
+        try:
+            rc = await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            continue
         if rc == 0:
             return name
 
@@ -244,9 +248,9 @@ class ContainerContext:
         rt = await self.runtime()
         cmd = [rt, "run", "-d", "--rm"]
 
-        env_path = Path(self.env_file)
+        env_path = Path(self.build_path) / self.env_file
         if env_path.exists():
-            cmd.extend(["--env-file", str(env_path)])
+            cmd.extend(["--env-file", str(env_path.resolve())])
 
         for mount in self.mounts:
             cmd.extend(["-v", mount])
