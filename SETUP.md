@@ -3,7 +3,7 @@
 This guide walks you through every step required to create a Discord bot,
 configure it, and connect it to a server so you can run an Agora agent.
 
-> **Last verified:** April 2025. Discord occasionally rearranges the Developer
+> **Last verified:** April 2026. Discord occasionally rearranges the Developer
 > Portal UI, but the underlying concepts (Application, Bot user, OAuth2 scopes,
 > Gateway Intents) have been stable since 2022.
 
@@ -478,9 +478,9 @@ When applying for verification, Discord expects clear explanations:
 ### Rate Limits
 
 Discord enforces global and per-route rate limits on API calls. Agora handles
-cooperative rate limiting internally (configured via `rate_limit` in
-`agent.yaml`), but be aware that Discord may also throttle your bot if it
-sends too many requests.
+cooperative rate limiting internally via the exchange cap (configured via
+`exchange_cap` in `agent.yaml`), but be aware that Discord may also throttle
+your bot if it sends too many API requests.
 
 ---
 
