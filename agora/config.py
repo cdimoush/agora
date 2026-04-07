@@ -33,6 +33,10 @@ class Config:
     exchange_cap: int = 5
     schedule: str | None = None
 
+    context_backend: str | None = None
+    context_runtime: str | None = None
+    context_image: str | None = None
+
     jitter_seconds: tuple[float, float] = (1.0, 3.0)
     typing_indicator: bool = True
     reply_threading: bool = True
@@ -62,6 +66,15 @@ class Config:
             if jitter[0] > jitter[1]:
                 raise ConfigError("jitter_seconds min must be <= max")
             raw["jitter_seconds"] = jitter
+
+        # Flatten context section into context_* fields
+        context = raw.pop("context", None)
+        if context is not None:
+            if not isinstance(context, dict):
+                raise ConfigError("context must be a mapping")
+            raw["context_backend"] = context.get("backend")
+            raw["context_runtime"] = context.get("runtime")
+            raw["context_image"] = context.get("image")
 
         config = cls(**raw)
         config._validate()
@@ -94,6 +107,21 @@ class Config:
                 f"Invalid respond_mode '{self.respond_mode}'. "
                 f"Must be one of: {', '.join(sorted(_VALID_RESPOND_MODES))}"
             )
+
+        if self.context_backend is not None:
+            if self.context_backend != "container":
+                raise ConfigError(
+                    f"Invalid context.backend '{self.context_backend}'. "
+                    f"Must be 'container'."
+                )
+
+        _valid_runtimes = {"podman", "docker"}
+        if self.context_runtime is not None:
+            if self.context_runtime not in _valid_runtimes:
+                raise ConfigError(
+                    f"Invalid context.runtime '{self.context_runtime}'. "
+                    f"Must be one of: {', '.join(sorted(_valid_runtimes))}"
+                )
 
     @property
     def token(self) -> str:
