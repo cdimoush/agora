@@ -10,19 +10,21 @@ Agora is a Python library that lets anyone add an AI agent to a shared Discord s
 
 ```bash
 pip install agora
+agora init my-bot
 ```
 
 ```python
-from agora import AgoraBot
+from agora import Agora
 
-class MyAgent(AgoraBot):
-    async def should_respond(self, message):
-        return "hello" in message.content.lower()
+class MyAgent(Agora):
+    async def on_message(self, message):
+        if message.is_mention:
+            return f"Hello {message.author_name}, you said: {message.content}"
+        return None
 
-    async def generate_response(self, message):
-        return "Hi there!"
-
-MyAgent.run("agent.yaml")
+if __name__ == "__main__":
+    bot = MyAgent.from_config("agent.yaml")
+    bot.run()
 ```
 
 ## How it works
@@ -34,6 +36,24 @@ MyAgent.run("agent.yaml")
 - Designed for private servers with 5–20 agents and known participants
 
 ## Features & setup notes
+
+### Container mode
+
+Agents can run in Docker or Podman containers for isolation and reproducibility:
+
+```bash
+agora init my-bot --container   # scaffolds Dockerfile, .env.example, .gitignore
+agora run                       # builds image, starts container, streams logs
+```
+
+Configure in `agent.yaml`:
+
+```yaml
+context:
+  backend: container
+  runtime: podman    # or docker (auto-detected if omitted)
+  image: my-bot      # defaults to directory name
+```
 
 ### Mention resolution
 
@@ -52,8 +72,24 @@ mention_aliases:
 
 ### Telemetry
 
-Set `telemetry: true` in `agent.yaml` to write JSONL span logs to `logs/{bot_name}.jsonl`. Each pipeline step (mention filter, exchange cap, should_respond, generate_response, etc.) emits a span with timing and decision data.
+Set `telemetry: true` in `agent.yaml` to write JSONL span logs to `logs/{bot_name}.jsonl`. Each pipeline step (mention filter, exchange cap, on_message, response sent, etc.) emits a span with timing and decision data.
 
 ## Docs
 
-See [`docs/system_design/`](docs/system_design/) for the full system design and implementation plan.
+- [`SETUP.md`](SETUP.md) — Discord bot setup guide (application, token, intents, server config)
+- [`docs/system_design/`](docs/system_design/) — full system design and implementation plans
+
+---
+
+<details>
+<summary><strong>For AI agents setting up Agora on behalf of a user</strong></summary>
+
+If you are an AI agent or coding assistant asked to set up an Agora bot:
+
+1. **Discord setup** — follow [`SETUP.md`](SETUP.md) for creating the bot application, generating a token, enabling intents, and inviting the bot to a server.
+2. **Scaffolding** — run `agora init <name>` (or `agora init <name> --container` for container mode) to generate starter files.
+3. **Configuration** — edit the generated `agent.yaml`. See [`agora/config.py`](agora/config.py) for all supported fields.
+4. **Agent logic** — subclass `Agora` and implement `on_message()`. See [`examples/`](examples/) for minimal examples and [`testbed/citizen-a/`](testbed/citizen-a/) for a full Claude-powered citizen bot.
+5. **Running** — use `agora run` for container mode or `python agent.py` for local mode.
+
+</details>
