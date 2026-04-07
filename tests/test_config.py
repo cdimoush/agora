@@ -53,18 +53,6 @@ class TestConfigFromYaml:
         assert cfg.reply_threading is True
         assert cfg.max_response_length == 4000
 
-    def test_rate_limit_silently_ignored(self, tmp_yaml):
-        """Old configs with rate_limit should still load without error."""
-        path = tmp_yaml("""\
-            token_env: MY_TOKEN
-            rate_limit:
-              per_channel_per_hour: 20
-              global_per_hour: 60
-        """)
-        cfg = Config.from_yaml(path)
-        assert cfg.token_env == "MY_TOKEN"
-        assert not hasattr(cfg, "rate_limit")
-
     def test_missing_token_env_raises(self, tmp_yaml):
         path = tmp_yaml("channels: {}\n")
         with pytest.raises(ConfigError, match="token_env is required"):

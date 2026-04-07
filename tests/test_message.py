@@ -72,14 +72,6 @@ class TestMessageProperties:
         msg = Message(_make_discord_msg(msg_id=777), BOT_USER_ID)
         assert msg.id == 777
 
-    def test_reference_id_present(self):
-        msg = Message(_make_discord_msg(reference_message_id=888), BOT_USER_ID)
-        assert msg.reference_id == 888
-
-    def test_reference_id_none(self):
-        msg = Message(_make_discord_msg(), BOT_USER_ID)
-        assert msg.reference_id is None
-
 
 class TestIsMention:
     def test_mentioned(self):

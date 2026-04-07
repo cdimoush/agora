@@ -59,9 +59,3 @@ class Message:
     def id(self) -> int:
         return self._msg.id
 
-    @property
-    def reference_id(self) -> int | None:
-        ref = self._msg.reference
-        if ref is not None:
-            return ref.message_id
-        return None

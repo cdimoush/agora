@@ -144,10 +144,10 @@ class ReplayProcessor:
                         f"[{ts}] {ch}  -> {s.bot}: {s.name} {decision}"
                         + (f" ({reason})" if reason else "")
                     )
-            elif s.name == "generate_response":
+            elif s.name in ("generate_response", "on_message"):
                 if s["decision"] == "pass":
                     lines.append(
-                        f"[{ts}] {ch}  -> {s.bot}: generate_response "
+                        f"[{ts}] {ch}  -> {s.bot}: {s.name} "
                         f"({s.duration_ms:.0f}ms)"
                     )
 

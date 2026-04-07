@@ -33,7 +33,10 @@ class CitizenBot(Agora):
         project_dir = Path(path).resolve().parent
         return cls(config, project_dir=project_dir)
 
-    async def generate_response(self, message: Message) -> str | None:
+    async def on_message(self, message: Message) -> str | None:
+        if not message.is_mention:
+            return None
+
         channel = self._client.get_channel(message.channel_id)
         if not channel:
             return None
