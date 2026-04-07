@@ -1,10 +1,12 @@
-"""CLI entry point for `agora init <name>` scaffolding command."""
+"""CLI entry point for Agora commands (init, run)."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import re
+import signal
 import stat
 import sys
 from pathlib import Path
@@ -87,12 +89,115 @@ def init_agent(name: str, base_dir: Path | None = None) -> Path:
     return project_dir
 
 
+def run_agent(config_path: str = "agent.yaml", runtime_override: str | None = None, rebuild: bool = False) -> None:
+    """Run an agent based on its agent.yaml configuration."""
+    from agora.config import Config, ConfigError
+    from agora.context import ContainerContext, RuntimeNotFound
+
+    cfg_path = Path(config_path)
+    if not cfg_path.exists():
+        print(f"Error: {config_path} not found. Run 'agora init' first.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        cfg = Config.from_yaml(cfg_path)
+    except ConfigError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if cfg.context_backend is None:
+        # Local mode — just run agent.py
+        agent_py = cfg_path.parent / "agent.py"
+        if not agent_py.exists():
+            print(f"Error: agent.py not found in {cfg_path.parent}", file=sys.stderr)
+            sys.exit(1)
+        os.execvp(sys.executable, [sys.executable, str(agent_py)])
+    else:
+        # Container mode
+        image = cfg.context_image or cfg_path.parent.name
+        runtime = runtime_override or cfg.context_runtime  # None = auto-detect
+        ctx = ContainerContext(
+            image=image,
+            runtime=runtime,
+            build_path=str(cfg_path.parent),
+        )
+
+        async def _run_container() -> int:
+            try:
+                rt = await ctx.runtime()
+            except RuntimeNotFound as e:
+                print(
+                    f"Error: {e}\n\n"
+                    "Install podman (recommended) or docker.\n"
+                    "Or remove the context section from agent.yaml to run locally.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            # Build
+            print(f"Building image '{image}' with {rt}...")
+            try:
+                await ctx.build_image(no_cache=rebuild)
+            except Exception as e:
+                print(f"Error building image: {e}", file=sys.stderr)
+                return 1
+
+            # Start
+            print(f"Starting container...")
+            try:
+                container_id = await ctx.start()
+            except Exception as e:
+                print(f"Error starting container: {e}", file=sys.stderr)
+                return 1
+
+            # Stream logs
+            log_proc = await asyncio.create_subprocess_exec(
+                rt, "logs", "-f", container_id,
+                stdout=None,  # inherit — goes to terminal
+                stderr=None,
+            )
+
+            # Wait for container to exit
+            wait_proc = await asyncio.create_subprocess_exec(
+                rt, "wait", container_id,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await wait_proc.communicate()
+            log_proc.terminate()
+
+            exit_code_str = stdout.decode().strip()
+            try:
+                return int(exit_code_str)
+            except ValueError:
+                return 0
+
+        loop = asyncio.new_event_loop()
+
+        # Handle signals
+        def _shutdown(signum, frame):
+            print("\nStopping container...")
+            loop.run_until_complete(ctx.stop())
+            sys.exit(130)
+
+        signal.signal(signal.SIGINT, _shutdown)
+        signal.signal(signal.SIGTERM, _shutdown)
+
+        exit_code = loop.run_until_complete(_run_container())
+        sys.exit(exit_code)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="agora", description="Agora CLI")
     sub = parser.add_subparsers(dest="command")
 
     init_parser = sub.add_parser("init", help="Create a new agent project")
     init_parser.add_argument("name", help="Name for the new agent project")
+
+    run_parser = sub.add_parser("run", help="Run an agent from its config")
+    run_parser.add_argument("--config", default="agent.yaml", help="Path to agent.yaml")
+    run_parser.add_argument("--runtime", choices=["podman", "docker"], help="Override container runtime")
+    run_parser.add_argument("--rebuild", action="store_true", help="Force image rebuild (no cache)")
 
     args = parser.parse_args(argv)
 
@@ -103,6 +208,12 @@ def main(argv: list[str] | None = None) -> None:
         except (FileExistsError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
+    elif args.command == "run":
+        run_agent(
+            config_path=args.config,
+            runtime_override=args.runtime,
+            rebuild=args.rebuild,
+        )
     else:
         parser.print_help()
         sys.exit(1)
