@@ -604,12 +604,22 @@ def fleet_start(role: str | None = None) -> int:
             continue
 
         # Spawn agora run as detached subprocess
+        # Use the agora entry point script (next to sys.executable) or fall
+        # back to running main() via -c import.
+        agora_bin = Path(sys.executable).parent / "agora"
+        if agora_bin.exists():
+            cmd = [str(agora_bin), "run"]
+        else:
+            cmd = [sys.executable, "-c",
+                   "from agora.cli import main; main(['run'])"]
         try:
+            log_file = Path(agent_path) / ".fleet-start.log"
+            log_fh = open(log_file, "w")
             proc = _sp.Popen(
-                [sys.executable, "-m", "agora.cli", "run"],
+                cmd,
                 cwd=agent_path,
-                stdout=_sp.DEVNULL,
-                stderr=_sp.DEVNULL,
+                stdout=log_fh,
+                stderr=log_fh,
                 start_new_session=True,
             )
         except Exception as e:
