@@ -1,0 +1,15 @@
+# {{name}} configuration
+token_env: DISCORD_BOT_TOKEN
+name: {{name}}
+display_name: {{name}}
+
+channels:
+  general: mention-only
+  bot-chat: subscribe
+
+context:
+  backend: container
+
+exchange_cap: 5
+typing_indicator: true
+reply_threading: true

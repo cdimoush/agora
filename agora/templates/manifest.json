@@ -1,0 +1,13 @@
+{
+  "templates": {
+    "echo": {
+      "description": "Minimal echo bot -- responds to @mentions",
+      "container": false
+    },
+    "citizen": {
+      "description": "Claude-powered agent with personality and memory",
+      "container": true,
+      "requires": ["claude-cli"]
+    }
+  }
+}
