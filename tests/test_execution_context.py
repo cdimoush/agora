@@ -383,39 +383,37 @@ class TestConfigContextParsing:
 class TestInitContainer:
     def test_container_generates_all_files(self, tmp_path):
         from agora.cli import init_agent
-        path = init_agent("box-test", base_dir=tmp_path, container=True)
+        path = init_agent("box-test", path=tmp_path / "box-test")
         assert (path / "agent.py").exists()
         assert (path / "agent.yaml").exists()
         assert (path / "Dockerfile").exists()
         assert (path / ".env.example").exists()
         assert (path / ".gitignore").exists()
-        assert (path / "run.sh").exists()
 
     def test_container_yaml_has_context(self, tmp_path):
         from agora.cli import init_agent
         from agora.config import Config
-        path = init_agent("ctx-test", base_dir=tmp_path, container=True)
+        path = init_agent("ctx-test", path=tmp_path / "ctx-test")
         cfg = Config.from_yaml(path / "agent.yaml")
         assert cfg.context_backend == "container"
 
     def test_gitignore_contains_env(self, tmp_path):
         from agora.cli import init_agent
-        path = init_agent("gi-test", base_dir=tmp_path, container=True)
+        path = init_agent("gi-test", path=tmp_path / "gi-test")
         gitignore = (path / ".gitignore").read_text()
         assert ".env" in gitignore
 
     def test_dockerfile_has_from(self, tmp_path):
         from agora.cli import init_agent
-        path = init_agent("df-test", base_dir=tmp_path, container=True)
+        path = init_agent("df-test", path=tmp_path / "df-test")
         dockerfile = (path / "Dockerfile").read_text()
         assert "FROM python:3.12-slim" in dockerfile
 
-    def test_no_container_flag_same_as_before(self, tmp_path):
+    def test_echo_template(self, tmp_path):
         from agora.cli import init_agent
-        path = init_agent("local-test", base_dir=tmp_path, container=False)
+        path = init_agent("local-test", path=tmp_path / "local-test", template="echo")
         assert (path / "agent.py").exists()
         assert (path / "agent.yaml").exists()
-        assert (path / "run.sh").exists()
         assert not (path / "Dockerfile").exists()
         assert not (path / ".env.example").exists()
 
