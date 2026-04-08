@@ -527,6 +527,259 @@ def show_status() -> None:
         print(f"{name:<16} {status:<16} {path:<40} {template:<10} {uptime:<8}")
 
 
+def _detect_runtime() -> str | None:
+    """Detect available container runtime (podman or docker)."""
+    import shutil
+    import subprocess as _sp
+    for rt in ("podman", "docker"):
+        if shutil.which(rt):
+            result = _sp.run([rt, "info"], capture_output=True)
+            if result.returncode == 0:
+                return rt
+    return None
+
+
+def _is_container_running(runtime: str, container_name: str) -> bool:
+    """Check if a container is running."""
+    import subprocess as _sp
+    result = _sp.run(
+        [runtime, "inspect", "--format", "{{.State.Running}}", container_name],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip().lower() == "true"
+
+
+def fleet_start(role: str | None = None) -> int:
+    """Start all registered agents (or those matching a role filter).
+
+    Spawns `agora run` as a detached subprocess per agent.
+    Returns the number of failures.
+    """
+    import subprocess as _sp
+    import time
+
+    from agora.registry import load_registry
+    from agora.templates import list_templates
+
+    registry = load_registry()
+    citizens = registry.get("citizens", {})
+    if not citizens:
+        print("No agents registered. Use 'agora init <name>' to create one.")
+        return 0
+
+    templates = list_templates()
+    runtime = _detect_runtime()
+
+    # Filter by role
+    targets = []
+    for agent_name, info in citizens.items():
+        if role and info.get("role", info.get("template", "")) != role:
+            continue
+        targets.append((agent_name, info))
+
+    if not targets:
+        print(f"No agents found with role '{role}'." if role else "No agents found.")
+        return 0
+
+    results = []
+    for agent_name, info in targets:
+        agent_path = info.get("path", "")
+        tmpl = info.get("template", "unknown")
+        tmpl_meta = templates.get(tmpl, {})
+        container_name = f"agora-{agent_name}"
+
+        # Skip non-container templates
+        if not tmpl_meta.get("container", False):
+            results.append((agent_name, "skip", "non-container template"))
+            continue
+
+        # Check if already running
+        if runtime and _is_container_running(runtime, container_name):
+            results.append((agent_name, "ok", f"already running ({container_name})"))
+            continue
+
+        # Verify path exists
+        if not Path(agent_path).exists():
+            results.append((agent_name, "fail", f"path not found: {agent_path}"))
+            continue
+
+        # Spawn agora run as detached subprocess
+        try:
+            proc = _sp.Popen(
+                [sys.executable, "-m", "agora.cli", "run"],
+                cwd=agent_path,
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as e:
+            results.append((agent_name, "fail", str(e)))
+            continue
+
+        # Poll for container startup (up to 60s)
+        if runtime:
+            started = False
+            for _ in range(60):
+                time.sleep(1)
+                if _is_container_running(runtime, container_name):
+                    started = True
+                    break
+                # Check if subprocess died
+                if proc.poll() is not None:
+                    break
+
+            if started:
+                results.append((agent_name, "ok", f"running ({container_name})"))
+            else:
+                results.append((agent_name, "fail", "startup timeout or process exited"))
+        else:
+            results.append((agent_name, "fail", "no container runtime found"))
+
+    # Print summary
+    failures = 0
+    for agent_name, status, detail in results:
+        if status == "ok":
+            print(f"  {agent_name:<16} ✓ {detail}")
+        elif status == "skip":
+            print(f"  {agent_name:<16} - {detail}")
+        else:
+            print(f"  {agent_name:<16} ✗ {detail}")
+            failures += 1
+
+    total = sum(1 for _, s, _ in results if s != "skip")
+    ok = sum(1 for _, s, _ in results if s == "ok")
+    if total > 0:
+        print(f"Fleet: {ok}/{total} started ({failures} failed)")
+
+    return failures
+
+
+def fleet_stop(role: str | None = None) -> int:
+    """Stop all running fleet agents (or those matching a role filter).
+
+    Returns the number of failures.
+    """
+    import subprocess as _sp
+
+    from agora.registry import load_registry
+
+    registry = load_registry()
+    citizens = registry.get("citizens", {})
+    if not citizens:
+        print("No agents registered.")
+        return 0
+
+    runtime = _detect_runtime()
+    if not runtime:
+        print("Error: no container runtime found.", file=sys.stderr)
+        return 1
+
+    targets = []
+    for agent_name, info in citizens.items():
+        if role and info.get("role", info.get("template", "")) != role:
+            continue
+        targets.append((agent_name, info))
+
+    results = []
+    for agent_name, info in targets:
+        container_name = f"agora-{agent_name}"
+        if _is_container_running(runtime, container_name):
+            result = _sp.run(
+                [runtime, "stop", "-t", "10", container_name],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                results.append((agent_name, "ok", f"stopped {container_name}"))
+            else:
+                results.append((agent_name, "fail", result.stderr.strip()))
+        else:
+            results.append((agent_name, "skip", "not running"))
+
+    failures = 0
+    for agent_name, status, detail in results:
+        if status == "ok":
+            print(f"  {agent_name:<16} ✓ {detail}")
+        elif status == "skip":
+            print(f"  {agent_name:<16} - {detail}")
+        else:
+            print(f"  {agent_name:<16} ✗ {detail}")
+            failures += 1
+
+    stopped = sum(1 for _, s, _ in results if s == "ok")
+    total = sum(1 for _, s, _ in results if s != "skip")
+    if total > 0:
+        print(f"Fleet: {stopped}/{total} stopped ({failures} failed)")
+
+    return failures
+
+
+def fleet_status(role: str | None = None) -> None:
+    """Show fleet status with role and display_name columns."""
+    import subprocess as _sp
+
+    from agora.registry import load_registry
+    from agora.templates import list_templates
+
+    registry = load_registry()
+    citizens = registry.get("citizens", {})
+    templates = list_templates()
+
+    runtime = _detect_runtime()
+
+    rows = []
+    for agent_name, info in citizens.items():
+        agent_role = info.get("role", info.get("template", "?"))
+        if role and agent_role != role:
+            continue
+
+        display = info.get("display_name", agent_name)
+        tmpl = info.get("template", "?")
+        tmpl_meta = templates.get(tmpl, {})
+        is_container = tmpl_meta.get("container", False)
+        container_name = f"agora-{agent_name}"
+
+        if not is_container:
+            rows.append((agent_name, display, agent_role, "local", "-"))
+            continue
+
+        if runtime:
+            result = _sp.run(
+                [runtime, "inspect", "--format",
+                 "{{.State.Running}}|{{.State.StartedAt}}",
+                 container_name],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split("|")
+                running = parts[0].lower() == "true"
+                status = "running" if running else "stopped"
+                uptime = "-"
+                if running and len(parts) > 1:
+                    try:
+                        from datetime import datetime, timezone
+                        started = datetime.fromisoformat(parts[1].replace("Z", "+00:00"))
+                        delta = datetime.now(timezone.utc) - started
+                        hours, remainder = divmod(int(delta.total_seconds()), 3600)
+                        minutes = remainder // 60
+                        uptime = f"{hours}h{minutes}m" if hours > 0 else f"{minutes}m"
+                    except Exception:
+                        uptime = "?"
+                rows.append((agent_name, display, agent_role, status, uptime))
+            else:
+                rows.append((agent_name, display, agent_role, "stopped", "-"))
+        else:
+            rows.append((agent_name, display, agent_role, "?", "-"))
+
+    if not rows:
+        msg = f"No agents with role '{role}'." if role else "No agents registered."
+        print(msg)
+        return
+
+    print(f"{'NAME':<16} {'DISPLAY':<16} {'ROLE':<12} {'STATUS':<10} {'UPTIME':<8}")
+    for name, display, r, status, uptime in rows:
+        print(f"{name:<16} {display:<16} {r:<12} {status:<10} {uptime:<8}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="agora", description="Agora CLI")
     sub = parser.add_subparsers(dest="command")
@@ -553,6 +806,19 @@ def main(argv: list[str] | None = None) -> None:
 
     # -- status --
     sub.add_parser("status", help="Show all registered agents and their state")
+
+    # -- fleet --
+    fleet_parser = sub.add_parser("fleet", help="Fleet management commands")
+    fleet_sub = fleet_parser.add_subparsers(dest="fleet_command")
+
+    fleet_start_parser = fleet_sub.add_parser("start", help="Start all registered agents")
+    fleet_start_parser.add_argument("--role", default=None, help="Only start agents with this role")
+
+    fleet_stop_parser = fleet_sub.add_parser("stop", help="Stop all running agents")
+    fleet_stop_parser.add_argument("--role", default=None, help="Only stop agents with this role")
+
+    fleet_status_parser = fleet_sub.add_parser("status", help="Show fleet status")
+    fleet_status_parser.add_argument("--role", default=None, help="Filter by role")
 
     args = parser.parse_args(argv)
 
@@ -594,6 +860,18 @@ def main(argv: list[str] | None = None) -> None:
         stop_agent(name=args.name, stop_all=args.stop_all)
     elif args.command == "status":
         show_status()
+    elif args.command == "fleet":
+        if args.fleet_command == "start":
+            failures = fleet_start(role=args.role)
+            sys.exit(failures)
+        elif args.fleet_command == "stop":
+            failures = fleet_stop(role=args.role)
+            sys.exit(failures)
+        elif args.fleet_command == "status":
+            fleet_status(role=args.role)
+        else:
+            fleet_parser.print_help()
+            sys.exit(1)
     else:
         parser.print_help()
         sys.exit(1)

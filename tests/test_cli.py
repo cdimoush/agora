@@ -8,7 +8,10 @@ import py_compile
 
 import pytest
 
-from agora.cli import init_agent, _slugify, _to_class_name, _validate_name, _resolve_agora_source
+from agora.cli import (
+    init_agent, _slugify, _to_class_name, _validate_name, _resolve_agora_source,
+    fleet_start, fleet_stop, fleet_status, _detect_runtime, _is_container_running,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -265,6 +268,129 @@ class TestRegistry:
         entry = reg["citizens"]["fleet-test"]
         assert entry["role"] == "moderator"
         assert entry["display_name"] == "Fleet Test"
+
+
+class TestFleetCommands:
+    """Tests for agora fleet start/stop/status."""
+
+    def _register_agents(self, tmp_path):
+        """Register test agents in isolated registry."""
+        from agora.registry import register
+        register("nova", str(tmp_path / "nova"), "citizen",
+                 display_name="Nova", role="citizen")
+        register("rex", str(tmp_path / "rex"), "citizen",
+                 display_name="Rex", role="citizen")
+        register("mod", str(tmp_path / "mod"), "moderator",
+                 display_name="Mod", role="moderator")
+        # Create agent dirs with agent.yaml
+        for name in ("nova", "rex", "mod"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "agent.yaml").write_text(f"token_env: AGORA_{name.upper()}_TOKEN\nname: {name}\n")
+
+    def test_fleet_status_shows_all_agents(self, tmp_path, capsys, monkeypatch):
+        self._register_agents(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        fleet_status()
+        out = capsys.readouterr().out
+        assert "nova" in out
+        assert "rex" in out
+        assert "mod" in out
+
+    def test_fleet_status_role_filter(self, tmp_path, capsys, monkeypatch):
+        self._register_agents(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        fleet_status(role="moderator")
+        out = capsys.readouterr().out
+        assert "mod" in out
+        assert "nova" not in out
+
+    def test_fleet_status_shows_display_name(self, tmp_path, capsys, monkeypatch):
+        self._register_agents(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        fleet_status()
+        out = capsys.readouterr().out
+        assert "Nova" in out
+        assert "Rex" in out
+        assert "Mod" in out
+
+    def test_fleet_status_shows_role(self, tmp_path, capsys, monkeypatch):
+        self._register_agents(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        fleet_status()
+        out = capsys.readouterr().out
+        assert "citizen" in out
+        assert "moderator" in out
+
+    def test_fleet_start_skips_non_container(self, tmp_path, capsys, monkeypatch):
+        """Echo/bare templates are non-container and should be skipped."""
+        from agora.registry import register
+        register("echo-bot", str(tmp_path / "echo-bot"), "echo",
+                 display_name="Echo Bot", role="echo")
+        (tmp_path / "echo-bot").mkdir()
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
+        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: False)
+        failures = fleet_start()
+        out = capsys.readouterr().out
+        assert "non-container" in out
+
+    def test_fleet_start_reports_missing_path(self, tmp_path, capsys, monkeypatch):
+        from agora.registry import register
+        register("ghost", "/nonexistent/path", "citizen",
+                 display_name="Ghost", role="citizen")
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
+        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: False)
+        failures = fleet_start()
+        out = capsys.readouterr().out
+        assert "path not found" in out
+        assert failures == 1
+
+    def test_fleet_start_detects_already_running(self, tmp_path, capsys, monkeypatch):
+        from agora.registry import register
+        register("running-bot", str(tmp_path / "running-bot"), "citizen",
+                 display_name="Running Bot", role="citizen")
+        (tmp_path / "running-bot").mkdir()
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
+        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: True)
+        failures = fleet_start()
+        out = capsys.readouterr().out
+        assert "already running" in out
+        assert failures == 0
+
+    def test_fleet_stop_no_runtime(self, tmp_path, capsys, monkeypatch):
+        from agora.registry import register
+        register("bot", str(tmp_path / "bot"), "citizen",
+                 display_name="Bot", role="citizen")
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        failures = fleet_stop()
+        assert failures == 1
+
+    def test_fleet_stop_role_filter(self, tmp_path, capsys, monkeypatch):
+        self._register_agents(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
+        # Mock: only mod is running
+        def mock_running(runtime, name):
+            return name == "agora-mod"
+        monkeypatch.setattr("agora.cli._is_container_running", mock_running)
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+        failures = fleet_stop(role="moderator")
+        out = capsys.readouterr().out
+        assert "mod" in out
+        # Should not try to stop citizens
+        assert "nova" not in out
+
+    def test_fleet_status_empty_registry(self, capsys, monkeypatch):
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        fleet_status()
+        out = capsys.readouterr().out
+        assert "No agents registered" in out
+
+    def test_fleet_start_empty_registry(self, capsys, monkeypatch):
+        failures = fleet_start()
+        out = capsys.readouterr().out
+        assert "No agents registered" in out
+        assert failures == 0
 
 
 class TestResolveAgoraSource:
