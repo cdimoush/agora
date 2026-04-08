@@ -52,11 +52,11 @@ class TestInitAgent:
         py_compile.compile(str(path / "mind.py"), doraise=True)
 
     def test_agent_yaml_loads(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake")
+        monkeypatch.setenv("AGORA_YAML_TEST_TOKEN", "fake")
         path = init_agent("yaml-test", path=tmp_path / "yaml-test", template="echo")
         from agora.config import Config
         cfg = Config.from_yaml(path / "agent.yaml")
-        assert cfg.token_env == "DISCORD_BOT_TOKEN"
+        assert cfg.token_env == "AGORA_YAML_TEST_TOKEN"
 
     def test_raises_if_dir_exists(self, tmp_path):
         init_agent("dup-test", path=tmp_path / "dup-test", template="echo")
@@ -84,6 +84,54 @@ class TestInitAgent:
         path = init_agent("auto-dir")
         assert path == tmp_path / "auto-dir"
         assert path.exists()
+
+    def test_moderator_template_has_all_files(self, tmp_path):
+        path = init_agent("mod", path=tmp_path / "mod", template="moderator")
+        assert (path / "agent.py").exists()
+        assert (path / "agent.yaml").exists()
+        assert (path / "Dockerfile").exists()
+        assert (path / ".agora").exists()
+        # Moderator should NOT have mind.py or CLAUDE.md
+        assert not (path / "mind.py").exists()
+        assert not (path / "CLAUDE.md").exists()
+
+    def test_moderator_agent_py_compiles(self, tmp_path):
+        path = init_agent("mod-test", path=tmp_path / "mod-test", template="moderator")
+        py_compile.compile(str(path / "agent.py"), doraise=True)
+
+    def test_bare_template_has_minimal_files(self, tmp_path):
+        path = init_agent("custom", path=tmp_path / "custom", template="bare")
+        assert (path / "agent.py").exists()
+        assert (path / "agent.yaml").exists()
+        assert (path / ".agora").exists()
+        # Bare should NOT have Dockerfile, mind.py, CLAUDE.md
+        assert not (path / "Dockerfile").exists()
+        assert not (path / "mind.py").exists()
+
+    def test_bare_agent_py_compiles(self, tmp_path):
+        path = init_agent("bare-test", path=tmp_path / "bare-test", template="bare")
+        py_compile.compile(str(path / "agent.py"), doraise=True)
+
+    def test_token_env_substitution(self, tmp_path):
+        path = init_agent("nova", path=tmp_path / "nova", template="bare")
+        content = (path / "agent.yaml").read_text()
+        assert "AGORA_NOVA_TOKEN" in content
+        assert "{{token_env}}" not in content
+
+    def test_display_name_substitution(self, tmp_path):
+        path = init_agent("my-bot", path=tmp_path / "my-bot", template="bare")
+        content = (path / "agent.yaml").read_text()
+        assert "My Bot" in content
+        assert "{{display_name}}" not in content
+
+    def test_all_placeholders_resolved(self, tmp_path):
+        """Ensure no unresolved {{...}} placeholders in any template file."""
+        for tmpl in ["echo", "citizen", "moderator", "bare"]:
+            path = init_agent(f"test-{tmpl}", path=tmp_path / f"test-{tmpl}", template=tmpl)
+            for f in path.iterdir():
+                if f.is_file() and f.suffix in (".py", ".yaml", ".yml", ".md"):
+                    content = f.read_text()
+                    assert "{{" not in content, f"Unresolved placeholder in {f.name} ({tmpl} template)"
 
     def test_unknown_template_raises(self, tmp_path):
         with pytest.raises(ValueError, match="Unknown template"):
@@ -133,6 +181,8 @@ class TestTemplates:
         templates = list_templates()
         assert "echo" in templates
         assert "citizen" in templates
+        assert "moderator" in templates
+        assert "bare" in templates
 
     def test_get_template_dir(self):
         from agora.templates import get_template_dir
@@ -186,6 +236,35 @@ class TestRegistry:
         from agora.registry import load_registry
         reg = load_registry()
         assert reg == {"citizens": {}}
+
+    def test_register_with_display_name_and_role(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("agora.registry.REGISTRY_DIR", tmp_path)
+        monkeypatch.setattr("agora.registry.REGISTRY_PATH", tmp_path / "registry.json")
+        from agora.registry import register, load_registry
+        register("nova", "/tmp/nova", "citizen",
+                 display_name="Nova", role="citizen")
+        reg = load_registry()
+        entry = reg["citizens"]["nova"]
+        assert entry["display_name"] == "Nova"
+        assert entry["role"] == "citizen"
+
+    def test_register_without_optional_fields(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("agora.registry.REGISTRY_DIR", tmp_path)
+        monkeypatch.setattr("agora.registry.REGISTRY_PATH", tmp_path / "registry.json")
+        from agora.registry import register, load_registry
+        register("old-bot", "/tmp/old-bot", "echo")
+        reg = load_registry()
+        entry = reg["citizens"]["old-bot"]
+        assert "display_name" not in entry
+        assert "role" not in entry
+
+    def test_init_populates_registry_with_role(self, tmp_path):
+        from agora.registry import load_registry
+        init_agent("fleet-test", path=tmp_path / "fleet-test", template="moderator")
+        reg = load_registry()
+        entry = reg["citizens"]["fleet-test"]
+        assert entry["role"] == "moderator"
+        assert entry["display_name"] == "Fleet Test"
 
 
 class TestResolveAgoraSource:

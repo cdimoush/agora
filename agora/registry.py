@@ -51,6 +51,8 @@ def register(
     path: str,
     template: str = "unknown",
     created: str | None = None,
+    display_name: str | None = None,
+    role: str | None = None,
 ) -> None:
     """Register a citizen. Errors if name is registered to a different path."""
     _ensure_dir()
@@ -76,11 +78,17 @@ def register(
                     f"Use a different name or remove the existing citizen."
                 )
 
-            data["citizens"][name] = {
+            entry = {
                 "path": path,
                 "template": template,
                 "created": created or date.today().isoformat(),
             }
+            if display_name is not None:
+                entry["display_name"] = display_name
+            if role is not None:
+                entry["role"] = role
+
+            data["citizens"][name] = entry
 
             f.seek(0)
             f.truncate()

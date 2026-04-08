@@ -76,9 +76,14 @@ def init_agent(
     else:
         project_dir = Path.cwd() / slug
 
+    display_name = slug.replace("-", " ").replace("_", " ").title()
+    token_env = f"AGORA_{slug.upper().replace('-', '_')}_TOKEN"
+
     substitutions = {
         "name": slug,
         "class_name": class_name,
+        "display_name": display_name,
+        "token_env": token_env,
     }
 
     copy_template(
@@ -93,7 +98,8 @@ def init_agent(
     # Auto-register
     try:
         from agora.registry import register
-        register(slug, str(project_dir.resolve()), template)
+        register(slug, str(project_dir.resolve()), template,
+                 display_name=display_name, role=template)
     except Exception:
         pass  # Registry is advisory
 
