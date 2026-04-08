@@ -243,12 +243,15 @@ class ContainerContext:
 
     # -- container lifecycle -------------------------------------------------
 
-    async def start(self) -> str:
+    async def start(self, name: str | None = None) -> str:
         """Start the container in detached mode.  Returns the container ID."""
         rt = await self.runtime()
         cmd = [rt, "run", "-d", "--rm"]
 
-        env_path = Path(self.build_path) / self.env_file
+        if name:
+            cmd.extend(["--name", name])
+
+        env_path = Path(self.env_file) if Path(self.env_file).is_absolute() else Path(self.build_path) / self.env_file
         if env_path.exists():
             cmd.extend(["--env-file", str(env_path.resolve())])
 
