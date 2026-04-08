@@ -11,6 +11,15 @@ import pytest
 from agora.cli import init_agent, _slugify, _to_class_name, _validate_name, _resolve_agora_source
 
 
+@pytest.fixture(autouse=True)
+def isolate_registry(tmp_path, monkeypatch):
+    """Prevent tests from polluting the real ~/.agora/registry.json."""
+    reg_dir = tmp_path / "dot-agora"
+    reg_dir.mkdir()
+    monkeypatch.setattr("agora.registry.REGISTRY_DIR", reg_dir)
+    monkeypatch.setattr("agora.registry.REGISTRY_PATH", reg_dir / "registry.json")
+
+
 class TestInitAgent:
     def test_creates_directory_with_expected_files(self, tmp_path):
         path = init_agent("my-bot", path=tmp_path / "my-bot", template="echo")

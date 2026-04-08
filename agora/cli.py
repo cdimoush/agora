@@ -197,7 +197,7 @@ def _stop_existing_container(runtime: str, container_name: str) -> None:
                        capture_output=True)
     # Also remove stopped container with same name (--rm may not have caught it)
     subprocess.run([runtime, "rm", "-f", container_name],
-                   capture_output=True, stderr=subprocess.DEVNULL)
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def run_agent(
@@ -248,11 +248,18 @@ def run_agent(
         build_dir = _build_context(agent_dir, source_path)
 
         try:
+            # Auto-detect Claude credentials to mount
+            mounts = []
+            claude_creds = Path.home() / ".claude" / ".credentials.json"
+            if claude_creds.exists():
+                mounts.append(f"{claude_creds}:/home/agent/.claude/.credentials.json:ro")
+
             ctx = ContainerContext(
                 image=image,
                 runtime=runtime,
                 build_path=str(build_dir),
                 env_file=str(agent_dir / ".env"),
+                mounts=mounts,
             )
 
             async def _run_container() -> int:
@@ -375,14 +382,16 @@ def stop_agent(name: str | None = None, stop_all: bool = False) -> None:
         print("No agents registered.")
         return
 
-    # Detect runtime synchronously
+    import shutil
     import subprocess
+    runtime = None
     for rt in ("podman", "docker"):
-        result = subprocess.run([rt, "info"], capture_output=True)
-        if result.returncode == 0:
-            runtime = rt
-            break
-    else:
+        if shutil.which(rt):
+            result = subprocess.run([rt, "info"], capture_output=True)
+            if result.returncode == 0:
+                runtime = rt
+                break
+    if not runtime:
         print("Error: no container runtime found.", file=sys.stderr)
         sys.exit(1)
 
@@ -427,12 +436,14 @@ def show_status() -> None:
     citizens = registry.get("citizens", {})
 
     # Detect runtime
+    import shutil as _shutil
     runtime = None
     for rt in ("podman", "docker"):
-        result = subprocess.run([rt, "info"], capture_output=True)
-        if result.returncode == 0:
-            runtime = rt
-            break
+        if _shutil.which(rt):
+            result = subprocess.run([rt, "info"], capture_output=True)
+            if result.returncode == 0:
+                runtime = rt
+                break
 
     # Collect status for each registered citizen
     rows = []

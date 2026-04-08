@@ -8,6 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _isolate_registry(tmp_path, monkeypatch):
+    """Prevent tests from polluting the real ~/.agora/registry.json."""
+    reg_dir = tmp_path / "dot-agora"
+    reg_dir.mkdir()
+    monkeypatch.setattr("agora.registry.REGISTRY_DIR", reg_dir)
+    monkeypatch.setattr("agora.registry.REGISTRY_PATH", reg_dir / "registry.json")
+
+
 from agora.context import (
     ContainerContext,
     ContainerCrashed,
