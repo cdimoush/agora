@@ -84,12 +84,21 @@ def compose_service_block(agent_dir: Path) -> dict:
         "restart": "unless-stopped",
     }
 
+    volumes = []
+
     # Mount Claude credentials if available on host
     claude_creds = Path.home() / ".claude" / ".credentials.json"
     if claude_creds.exists():
-        service["volumes"] = [
-            f"{claude_creds}:/home/agent/.claude/.credentials.json:ro"
-        ]
+        volumes.append(f"{claude_creds}:/home/agent/.claude/.credentials.json:ro")
+
+    # Mount worktree if it exists for this agent
+    wt_dir = _worktrees_dir() / name
+    if wt_dir.is_dir():
+        volumes.append(f"./worktrees/{name}/agora:/workspace/agora:rw")
+        service.setdefault("environment", []).append("AGORA_DEV_MODE=1")
+
+    if volumes:
+        service["volumes"] = volumes
 
     return {name: service}
 
