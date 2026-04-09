@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import discord
+
 
 class Message:
     """Immutable view of a Discord message, tailored for agent decision-making.
@@ -48,7 +50,14 @@ class Message:
         return any(u.id == self._bot_user_id for u in self._msg.mentions)
 
     @property
+    def is_dm(self) -> bool:
+        """True if this message was sent via DM."""
+        return isinstance(self._msg.channel, discord.DMChannel)
+
+    @property
     def channel_name(self) -> str:
+        if isinstance(self._msg.channel, discord.DMChannel):
+            return "dm"
         return self._msg.channel.name
 
     @property
