@@ -68,13 +68,19 @@ def compose_service_block(agent_dir: Path) -> dict:
 
     name = cfg.get("name", agent_dir.name)
 
+    # Use paths relative to cwd (compose context) so the file is portable
+    try:
+        rel_dir = agent_dir.resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        rel_dir = agent_dir
+
     service = {
         "build": {
             "context": ".",
-            "dockerfile": str(agent_dir / "Dockerfile"),
+            "dockerfile": str(rel_dir / "Dockerfile"),
         },
         "container_name": f"agora-{name}",
-        "env_file": [str(agent_dir / ".env")],
+        "env_file": [str(rel_dir / ".env")],
         "restart": "unless-stopped",
     }
 
