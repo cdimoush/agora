@@ -28,3 +28,13 @@ __pycache__/
 
 # Beads / Dolt files (added by bd init)
 *.db
+
+# Fleet — agent instances (generated, not tracked)
+fleet/
+
+# Docker compose — derived from fleet/ contents
+docker-compose.yml
+docker-compose.override.yml
+
+# Worktrees — per-agent agora copies (Phase 2)
+worktrees/
