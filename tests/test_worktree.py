@@ -240,5 +240,5 @@ class TestComposeWorktreeIntegration:
 
         wt_volumes = [v for v in svc.get("volumes", []) if "/workspace/agora" in v]
         assert len(wt_volumes) == 1
-        assert ":rw" in wt_volumes[0]
+        assert wt_volumes[0] == "./worktrees/rex:/workspace/agora:rw"
         assert "AGORA_DEV_MODE=1" in svc.get("environment", [])

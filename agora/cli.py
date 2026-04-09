@@ -94,7 +94,7 @@ def compose_service_block(agent_dir: Path) -> dict:
     # Mount worktree if it exists for this agent
     wt_dir = _worktrees_dir() / name
     if wt_dir.is_dir():
-        volumes.append(f"./worktrees/{name}/agora:/workspace/agora:rw")
+        volumes.append(f"./worktrees/{name}:/workspace/agora:rw")
         service.setdefault("environment", []).append("AGORA_DEV_MODE=1")
 
     if volumes:
