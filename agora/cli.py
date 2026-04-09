@@ -589,6 +589,82 @@ def worktree_status() -> None:
         print(f"  {name:16s}  {branch:24s}  {diff_summary}")
 
 
+def worktree_diff(name: str) -> None:
+    """Show git diff for an agent's worktree."""
+    import subprocess as _sp
+
+    wt_dir = _worktrees_dir() / name
+    if not wt_dir.exists():
+        print(f"No worktree found for '{name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    result = _sp.run(
+        ["git", "diff", "main"],
+        capture_output=True, text=True, cwd=str(wt_dir),
+    )
+    if result.stdout.strip():
+        print(result.stdout)
+    else:
+        print(f"No changes in worktree '{name}'.")
+
+
+def worktree_merge(name: str) -> None:
+    """Merge an agent's worktree branch into main."""
+    import subprocess as _sp
+
+    if not _is_repo_root():
+        print("Error: must run from agora repo root.", file=sys.stderr)
+        sys.exit(1)
+
+    branch = f"worktree/{name}"
+    wt_dir = _worktrees_dir() / name
+    if not wt_dir.exists():
+        print(f"No worktree found for '{name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    # Check for uncommitted changes in main repo
+    result = _sp.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True, text=True, cwd=str(Path.cwd()),
+    )
+    if result.stdout.strip():
+        print("Error: uncommitted changes in main repo. Commit or stash first.", file=sys.stderr)
+        sys.exit(1)
+
+    # Merge the worktree branch into current branch (should be main)
+    result = _sp.run(
+        ["git", "merge", branch, "--no-edit"],
+        capture_output=True, text=True, cwd=str(Path.cwd()),
+    )
+    if result.returncode != 0:
+        print(f"Merge conflict:\n{result.stdout}\n{result.stderr}")
+        print("Resolve conflicts, then commit.")
+        sys.exit(1)
+
+    print(f"Merged {branch} into current branch.")
+
+
+def worktree_sync(name: str) -> None:
+    """Sync main into an agent's worktree (merge main into worktree branch)."""
+    import subprocess as _sp
+
+    wt_dir = _worktrees_dir() / name
+    if not wt_dir.exists():
+        print(f"No worktree found for '{name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    result = _sp.run(
+        ["git", "merge", "main", "--no-edit"],
+        capture_output=True, text=True, cwd=str(wt_dir),
+    )
+    if result.returncode != 0:
+        print(f"Merge conflict in worktree '{name}':\n{result.stdout}\n{result.stderr}")
+        print(f"Resolve in {wt_dir}, then commit.")
+        sys.exit(1)
+
+    print(f"Synced main into worktree '{name}'.")
+
+
 def _scan_fleet() -> list[Path]:
     """Scan fleet/ for agent directories containing agent.yaml."""
     fleet_dir = Path.cwd() / "fleet"
@@ -790,6 +866,15 @@ def main(argv: list[str] | None = None) -> None:
     wt_remove = wt_sub.add_parser("remove", help="Remove a worktree and its branch")
     wt_remove.add_argument("name", help="Agent name")
 
+    wt_diff = wt_sub.add_parser("diff", help="Show diff for an agent's worktree")
+    wt_diff.add_argument("name", help="Agent name")
+
+    wt_merge = wt_sub.add_parser("merge", help="Merge worktree branch into main")
+    wt_merge.add_argument("name", help="Agent name")
+
+    wt_sync = wt_sub.add_parser("sync", help="Sync main into a worktree")
+    wt_sync.add_argument("name", help="Agent name")
+
     wt_sub.add_parser("status", help="Show all worktrees with diff summaries")
 
     args = parser.parse_args(argv)
@@ -854,6 +939,12 @@ def main(argv: list[str] | None = None) -> None:
             worktree_create(args.name)
         elif args.wt_command == "remove":
             worktree_remove(args.name)
+        elif args.wt_command == "diff":
+            worktree_diff(args.name)
+        elif args.wt_command == "merge":
+            worktree_merge(args.name)
+        elif args.wt_command == "sync":
+            worktree_sync(args.name)
         elif args.wt_command == "status":
             worktree_status()
         else:
