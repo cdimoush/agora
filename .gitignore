@@ -38,3 +38,6 @@ docker-compose.override.yml
 
 # Worktrees — per-agent agora copies (Phase 2)
 worktrees/
+
+# Clones — per-agent full git clones (dev agent)
+clones/
