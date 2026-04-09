@@ -49,6 +49,38 @@ def _write_agora_metadata(project_dir: Path, template: str) -> None:
     (project_dir / ".agora").write_text(content)
 
 
+def compose_service_block(agent_dir: Path) -> dict:
+    """Generate a docker-compose service dict from an agent directory.
+
+    Args:
+        agent_dir: Path to an agent directory containing agent.yaml.
+
+    Returns:
+        Dict of {name: service_config} suitable for merging into compose services.
+    """
+    import yaml
+
+    cfg_path = agent_dir / "agent.yaml"
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"No agent.yaml in {agent_dir}")
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+
+    name = cfg.get("name", agent_dir.name)
+
+    service = {
+        "build": {
+            "context": ".",
+            "dockerfile": str(agent_dir / "Dockerfile"),
+        },
+        "container_name": f"agora-{name}",
+        "env_file": [str(agent_dir / ".env")],
+        "restart": "unless-stopped",
+    }
+
+    return {name: service}
+
+
 def init_agent(
     name: str,
     path: Path | None = None,
