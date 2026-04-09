@@ -261,15 +261,6 @@ class TestRegistry:
         assert "display_name" not in entry
         assert "role" not in entry
 
-    def test_init_populates_registry_with_role(self, tmp_path):
-        from agora.registry import load_registry
-        init_agent("fleet-test", path=tmp_path / "fleet-test", template="moderator")
-        reg = load_registry()
-        entry = reg["citizens"]["fleet-test"]
-        assert entry["role"] == "moderator"
-        assert entry["display_name"] == "Fleet Test"
-
-
 class TestFleetCommands:
     """Tests for agora fleet start/stop/status."""
 

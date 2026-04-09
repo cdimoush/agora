@@ -81,6 +81,33 @@ def compose_service_block(agent_dir: Path) -> dict:
     return {name: service}
 
 
+def _is_repo_root(path: Path | None = None) -> bool:
+    """Check if path looks like the agora repo root (has agora/ and .git/)."""
+    p = path or Path.cwd()
+    return (p / "agora").is_dir() and (p / ".git").exists()
+
+
+def _append_compose_service(agent_dir: Path) -> None:
+    """Append a service block to docker-compose.yml, creating it if needed."""
+    import yaml
+
+    compose_path = Path.cwd() / "docker-compose.yml"
+    if compose_path.exists():
+        with open(compose_path) as f:
+            compose = yaml.safe_load(f) or {}
+    else:
+        compose = {}
+
+    if "services" not in compose:
+        compose["services"] = {}
+
+    block = compose_service_block(agent_dir)
+    compose["services"].update(block)
+
+    with open(compose_path, "w") as f:
+        yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
+
+
 def init_agent(
     name: str,
     path: Path | None = None,
@@ -91,7 +118,7 @@ def init_agent(
 
     Args:
         name: Agent name (used for directory, container, registry).
-        path: Where to create the directory (default: ./<name>/).
+        path: Where to create the directory (default: fleet/<name>/ at repo root).
         template: Built-in template name (default: citizen).
         from_path: Custom template directory (overrides template).
 
@@ -105,8 +132,13 @@ def init_agent(
 
     if path is not None:
         project_dir = Path(path)
+    elif _is_repo_root():
+        project_dir = Path.cwd() / "fleet" / slug
     else:
         project_dir = Path.cwd() / slug
+
+    if project_dir.exists():
+        raise FileExistsError(f"{project_dir} already exists.")
 
     display_name = slug.replace("-", " ").replace("_", " ").title()
     token_env = f"AGORA_{slug.upper().replace('-', '_')}_TOKEN"
@@ -134,6 +166,13 @@ def init_agent(
                  display_name=display_name, role=template)
     except Exception:
         pass  # Registry is advisory
+
+    # Append to docker-compose.yml if at repo root
+    if _is_repo_root():
+        try:
+            _append_compose_service(project_dir)
+        except Exception:
+            pass  # Compose append is advisory
 
     return project_dir
 
@@ -882,8 +921,13 @@ def main(argv: list[str] | None = None) -> None:
                 template=args.template,
                 from_path=from_path,
             )
-            print(f"Created agent '{args.name}' at {path}")
-            print(f"Next: edit {path}/CLAUDE.md and {path}/.env, then run 'agora run'")
+            print(f"Created agent '{args.name}' at {path}/")
+            print(f"  (not tracked by git — customize freely)")
+            print(f"Next steps:")
+            print(f"  1. cp {path}/.env.example {path}/.env")
+            print(f"  2. Add your bot token to {path}/.env")
+            print(f"  3. (Optional) Edit {path}/agent.yaml and {path}/CLAUDE.md")
+            print(f"  4. Run: agora fleet start")
         except (FileExistsError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
