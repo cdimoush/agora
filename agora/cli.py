@@ -158,19 +158,15 @@ def _build_context(agent_dir: Path, agora_source: Path, dockerfile: Path | None 
             shutil.rmtree(tmpdir)
             sys.exit(1)
 
-    # Copy agora source
-    agora_src_dest = tmpdir / "agora-src"
-    agora_src_dest.mkdir()
-    shutil.copytree(agora_source / "agora", agora_src_dest / "agora",
+    # Copy agora source (matches Dockerfile: COPY agora/ + COPY pyproject.toml)
+    shutil.copytree(agora_source / "agora", tmpdir / "agora",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copy2(agora_source / "pyproject.toml", agora_src_dest / "pyproject.toml")
-    readme = agora_source / "README.md"
-    if readme.exists():
-        shutil.copy2(readme, agora_src_dest / "README.md")
+    shutil.copy2(agora_source / "pyproject.toml", tmpdir / "pyproject.toml")
 
-    # Copy agent files
-    agent_dest = tmpdir / "agent"
-    agent_dest.mkdir()
+    # Copy agent files into fleet/<name>/ (matches Dockerfile: COPY fleet/<name>/)
+    agent_name = agent_dir.name
+    agent_dest = tmpdir / "fleet" / agent_name
+    agent_dest.mkdir(parents=True)
     for item in agent_dir.iterdir():
         if item.name in ("Dockerfile", "__pycache__", ".env", "logs", "*.log"):
             continue
