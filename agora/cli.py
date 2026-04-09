@@ -159,8 +159,9 @@ def init_agent(
 
     _write_agora_metadata(project_dir, template)
 
-    # Append to docker-compose.yml if at repo root
-    if _is_repo_root():
+    # Append to docker-compose.yml if agent is in fleet/
+    fleet_dir = Path.cwd() / "fleet"
+    if _is_repo_root() and project_dir.resolve().is_relative_to(fleet_dir.resolve()):
         try:
             _append_compose_service(project_dir)
         except Exception:
