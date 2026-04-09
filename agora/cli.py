@@ -475,6 +475,120 @@ def _detect_runtime() -> str | None:
 
 
 
+def _worktrees_dir() -> Path:
+    """Return the worktrees/ directory path (at repo root)."""
+    return Path.cwd() / "worktrees"
+
+
+def worktree_create(name: str) -> Path:
+    """Create a git worktree for an agent.
+
+    Creates worktrees/<name>/ on branch worktree/<name> from main.
+    Returns the worktree path.
+    """
+    import subprocess as _sp
+
+    if not _is_repo_root():
+        print("Error: must run from agora repo root.", file=sys.stderr)
+        sys.exit(1)
+
+    wt_dir = _worktrees_dir() / name
+    if wt_dir.exists():
+        print(f"Worktree already exists: {wt_dir}")
+        return wt_dir
+
+    branch = f"worktree/{name}"
+
+    # Create the worktree with a new branch from main
+    result = _sp.run(
+        ["git", "worktree", "add", str(wt_dir), "-b", branch, "main"],
+        capture_output=True, text=True, cwd=str(Path.cwd()),
+    )
+    if result.returncode != 0:
+        # Branch may already exist from a previous remove that kept the branch
+        if "already exists" in result.stderr:
+            result = _sp.run(
+                ["git", "worktree", "add", str(wt_dir), branch],
+                capture_output=True, text=True, cwd=str(Path.cwd()),
+            )
+        if result.returncode != 0:
+            print(f"Error creating worktree: {result.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"Created worktree for '{name}' at {wt_dir}")
+    print(f"  Branch: {branch}")
+    return wt_dir
+
+
+def worktree_remove(name: str) -> None:
+    """Remove a git worktree and its branch.
+
+    Removes worktrees/<name>/ and deletes the worktree/<name> branch.
+    """
+    import subprocess as _sp
+
+    if not _is_repo_root():
+        print("Error: must run from agora repo root.", file=sys.stderr)
+        sys.exit(1)
+
+    wt_dir = _worktrees_dir() / name
+    branch = f"worktree/{name}"
+
+    if not wt_dir.exists():
+        print(f"No worktree found for '{name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    # Remove the worktree
+    result = _sp.run(
+        ["git", "worktree", "remove", str(wt_dir), "--force"],
+        capture_output=True, text=True, cwd=str(Path.cwd()),
+    )
+    if result.returncode != 0:
+        print(f"Error removing worktree: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+
+    # Delete the branch
+    _sp.run(
+        ["git", "branch", "-D", branch],
+        capture_output=True, text=True, cwd=str(Path.cwd()),
+    )
+
+    print(f"Removed worktree and branch for '{name}'.")
+
+
+def worktree_status() -> None:
+    """Show all agent worktrees with diff summaries."""
+    import subprocess as _sp
+
+    wt_base = _worktrees_dir()
+    if not wt_base.is_dir():
+        print("No worktrees/ directory. Use 'agora worktree create <name>' to create one.")
+        return
+
+    worktrees = sorted(d for d in wt_base.iterdir() if d.is_dir())
+    if not worktrees:
+        print("No worktrees found.")
+        return
+
+    for wt in worktrees:
+        name = wt.name
+        # Get diff stat
+        result = _sp.run(
+            ["git", "diff", "--stat", "main"],
+            capture_output=True, text=True, cwd=str(wt),
+        )
+        diff_summary = result.stdout.strip().split("\n")[-1] if result.stdout.strip() else "clean"
+
+        # Get branch name
+        br = _sp.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, cwd=str(wt),
+        )
+        branch = br.stdout.strip() or "detached"
+
+        print(f"  {name:16s}  {branch:24s}  {diff_summary}")
+
+
 def _scan_fleet() -> list[Path]:
     """Scan fleet/ for agent directories containing agent.yaml."""
     fleet_dir = Path.cwd() / "fleet"
@@ -666,6 +780,18 @@ def main(argv: list[str] | None = None) -> None:
     fleet_sub.add_parser("stop", help="Stop all fleet agents")
     fleet_sub.add_parser("status", help="Show fleet container status")
 
+    # -- worktree --
+    wt_parser = sub.add_parser("worktree", help="Manage per-agent git worktrees")
+    wt_sub = wt_parser.add_subparsers(dest="wt_command")
+
+    wt_create = wt_sub.add_parser("create", help="Create a worktree for an agent")
+    wt_create.add_argument("name", help="Agent name")
+
+    wt_remove = wt_sub.add_parser("remove", help="Remove a worktree and its branch")
+    wt_remove.add_argument("name", help="Agent name")
+
+    wt_sub.add_parser("status", help="Show all worktrees with diff summaries")
+
     args = parser.parse_args(argv)
 
     if args.command == "init":
@@ -722,6 +848,16 @@ def main(argv: list[str] | None = None) -> None:
             fleet_status()
         else:
             fleet_parser.print_help()
+            sys.exit(1)
+    elif args.command == "worktree":
+        if args.wt_command == "create":
+            worktree_create(args.name)
+        elif args.wt_command == "remove":
+            worktree_remove(args.name)
+        elif args.wt_command == "status":
+            worktree_status()
+        else:
+            wt_parser.print_help()
             sys.exit(1)
     else:
         parser.print_help()
