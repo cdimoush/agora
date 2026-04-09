@@ -78,6 +78,13 @@ def compose_service_block(agent_dir: Path) -> dict:
         "restart": "unless-stopped",
     }
 
+    # Mount Claude credentials if available on host
+    claude_creds = Path.home() / ".claude" / ".credentials.json"
+    if claude_creds.exists():
+        service["volumes"] = [
+            f"{claude_creds}:/home/agent/.claude/.credentials.json:ro"
+        ]
+
     return {name: service}
 
 
