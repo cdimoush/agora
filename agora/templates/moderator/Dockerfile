@@ -10,8 +10,9 @@ RUN useradd -m -s /bin/bash agent
 
 WORKDIR /agent
 COPY fleet/{{name}}/ .
-RUN chown -R agent:agent /agent
+COPY fleet/{{name}}/entrypoint.sh /agent/entrypoint.sh
+RUN chmod +x /agent/entrypoint.sh && chown -R agent:agent /agent
 
 USER agent
 
-CMD ["python", "agent.py"]
+ENTRYPOINT ["/agent/entrypoint.sh"]
