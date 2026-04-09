@@ -102,34 +102,21 @@ class TestInitAgent:
         path = init_agent("mod-test", path=tmp_path / "mod-test", template="moderator")
         py_compile.compile(str(path / "agent.py"), doraise=True)
 
-    def test_bare_template_has_minimal_files(self, tmp_path):
-        path = init_agent("custom", path=tmp_path / "custom", template="bare")
-        assert (path / "agent.py").exists()
-        assert (path / "agent.yaml").exists()
-        assert (path / ".agora").exists()
-        # Bare should NOT have Dockerfile, mind.py, CLAUDE.md
-        assert not (path / "Dockerfile").exists()
-        assert not (path / "mind.py").exists()
-
-    def test_bare_agent_py_compiles(self, tmp_path):
-        path = init_agent("bare-test", path=tmp_path / "bare-test", template="bare")
-        py_compile.compile(str(path / "agent.py"), doraise=True)
-
     def test_token_env_substitution(self, tmp_path):
-        path = init_agent("nova", path=tmp_path / "nova", template="bare")
+        path = init_agent("nova", path=tmp_path / "nova", template="echo")
         content = (path / "agent.yaml").read_text()
         assert "AGORA_NOVA_TOKEN" in content
         assert "{{token_env}}" not in content
 
     def test_display_name_substitution(self, tmp_path):
-        path = init_agent("my-bot", path=tmp_path / "my-bot", template="bare")
+        path = init_agent("my-bot", path=tmp_path / "my-bot", template="echo")
         content = (path / "agent.yaml").read_text()
         assert "My Bot" in content
         assert "{{display_name}}" not in content
 
     def test_all_placeholders_resolved(self, tmp_path):
         """Ensure no unresolved {{...}} placeholders in any template file."""
-        for tmpl in ["echo", "citizen", "moderator", "bare"]:
+        for tmpl in ["echo", "citizen", "moderator"]:
             path = init_agent(f"test-{tmpl}", path=tmp_path / f"test-{tmpl}", template=tmpl)
             for f in path.iterdir():
                 if f.is_file() and f.suffix in (".py", ".yaml", ".yml", ".md"):
@@ -185,7 +172,7 @@ class TestTemplates:
         assert "echo" in templates
         assert "citizen" in templates
         assert "moderator" in templates
-        assert "bare" in templates
+        assert "bare" not in templates
 
     def test_get_template_dir(self):
         from agora.templates import get_template_dir

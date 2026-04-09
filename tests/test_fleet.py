@@ -53,14 +53,6 @@ class TestMultiAgentInit:
         assert "respond_mode: all" in yaml_content
         assert "mod-log: write-only" in yaml_content
 
-    def test_init_bare_produces_minimal_dir(self, tmp_path):
-        path = init_agent("custom", path=tmp_path / "custom", template="bare")
-        assert (path / "agent.py").exists()
-        assert (path / "agent.yaml").exists()
-        assert not (path / "Dockerfile").exists()
-        assert not (path / "mind.py").exists()
-        py_compile.compile(str(path / "agent.py"), doraise=True)
-
     def test_each_agent_gets_unique_token_env(self, tmp_path):
         init_agent("nova", path=tmp_path / "nova", template="citizen")
         init_agent("rex", path=tmp_path / "rex", template="citizen")

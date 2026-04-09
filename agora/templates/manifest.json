@@ -12,10 +12,6 @@
     "moderator": {
       "description": "Server-side observer that monitors exchange cap violations",
       "container": true
-    },
-    "bare": {
-      "description": "Empty scaffold for custom agents",
-      "container": false
     }
   }
 }
