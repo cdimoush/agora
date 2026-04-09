@@ -1,27 +1,20 @@
-"""Tests for fleet management — multi-agent init, registry, and fleet commands.
+"""Tests for fleet management — multi-agent init, compose-based fleet commands.
 
 These tests validate the full fleet workflow: initializing multiple agents
-from different templates, checking registry state, and running fleet commands.
+from different templates, compose service generation, and fleet commands.
 No actual containers are started — container operations are mocked.
 """
 
 from __future__ import annotations
 
-import json
 import py_compile
 
 import pytest
 
-from agora.cli import init_agent, fleet_start, fleet_stop, fleet_status
-
-
-@pytest.fixture(autouse=True)
-def isolate_registry(tmp_path, monkeypatch):
-    """Prevent tests from polluting the real ~/.agora/registry.json."""
-    reg_dir = tmp_path / "dot-agora"
-    reg_dir.mkdir()
-    monkeypatch.setattr("agora.registry.REGISTRY_DIR", reg_dir)
-    monkeypatch.setattr("agora.registry.REGISTRY_PATH", reg_dir / "registry.json")
+from agora.cli import (
+    init_agent, fleet_start, fleet_stop, fleet_status,
+    compose_service_block, _scan_fleet, _ensure_compose,
+)
 
 
 class TestMultiAgentInit:
@@ -60,30 +53,6 @@ class TestMultiAgentInit:
         assert "respond_mode: all" in yaml_content
         assert "mod-log: write-only" in yaml_content
 
-    def test_init_three_agents_registers_all(self, tmp_path):
-        """Simulate the testbed fleet: 2 citizens + 1 moderator."""
-        init_agent("nova", path=tmp_path / "nova", template="citizen")
-        init_agent("rex", path=tmp_path / "rex", template="citizen")
-        init_agent("mod", path=tmp_path / "mod", template="moderator")
-
-        from agora.registry import load_registry
-        reg = load_registry()
-        citizens = reg["citizens"]
-
-        assert "nova" in citizens
-        assert "rex" in citizens
-        assert "mod" in citizens
-
-        # Check roles
-        assert citizens["nova"]["role"] == "citizen"
-        assert citizens["rex"]["role"] == "citizen"
-        assert citizens["mod"]["role"] == "moderator"
-
-        # Check display names
-        assert citizens["nova"]["display_name"] == "Nova"
-        assert citizens["rex"]["display_name"] == "Rex"
-        assert citizens["mod"]["display_name"] == "Mod"
-
     def test_init_bare_produces_minimal_dir(self, tmp_path):
         path = init_agent("custom", path=tmp_path / "custom", template="bare")
         assert (path / "agent.py").exists()
@@ -118,166 +87,164 @@ class TestMultiAgentInit:
         dockerfile = (path / "Dockerfile").read_text()
         assert "claude-code" in dockerfile
 
+    def test_citizen_dockerfile_uses_fleet_path(self, tmp_path):
+        """Citizen Dockerfile should COPY from fleet/<name>/."""
+        path = init_agent("nova", path=tmp_path / "nova", template="citizen")
+        dockerfile = (path / "Dockerfile").read_text()
+        assert "COPY fleet/nova/" in dockerfile
+        assert "COPY agora/" in dockerfile
+        assert "COPY pyproject.toml" in dockerfile
 
-class TestFleetWithMultipleAgents:
-    """Test fleet commands operating on a multi-agent registry."""
-
-    def _setup_fleet(self, tmp_path):
-        """Initialize a 3-agent fleet."""
+    def test_init_collision_raises(self, tmp_path):
+        """Re-init to same path raises FileExistsError."""
         init_agent("nova", path=tmp_path / "nova", template="citizen")
-        init_agent("rex", path=tmp_path / "rex", template="citizen")
-        init_agent("mod", path=tmp_path / "mod", template="moderator")
+        with pytest.raises(FileExistsError, match="already exists"):
+            init_agent("nova", path=tmp_path / "nova", template="citizen")
 
-    def test_fleet_status_all_agents(self, tmp_path, capsys, monkeypatch):
-        self._setup_fleet(tmp_path)
+
+class TestComposeServiceBlock:
+    """Test compose_service_block() codegen."""
+
+    def test_generates_service_dict(self, tmp_path):
+        agent_dir = tmp_path / "fleet" / "rex"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "agent.yaml").write_text("name: rex\ntoken_env: AGORA_REX_TOKEN\n")
+        (agent_dir / "Dockerfile").write_text("FROM python:3.12-slim\n")
+
+        block = compose_service_block(agent_dir)
+        assert "rex" in block
+        svc = block["rex"]
+        assert svc["container_name"] == "agora-rex"
+        assert svc["restart"] == "unless-stopped"
+        assert svc["build"]["context"] == "."
+        assert "Dockerfile" in svc["build"]["dockerfile"]
+
+    def test_missing_agent_yaml_raises(self, tmp_path):
+        agent_dir = tmp_path / "fleet" / "ghost"
+        agent_dir.mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="No agent.yaml"):
+            compose_service_block(agent_dir)
+
+    def test_uses_dir_name_if_no_name_in_yaml(self, tmp_path):
+        agent_dir = tmp_path / "fleet" / "fallback"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "agent.yaml").write_text("token_env: AGORA_TOKEN\n")
+        block = compose_service_block(agent_dir)
+        assert "fallback" in block
+
+
+class TestScanFleet:
+    """Test _scan_fleet() directory scanning."""
+
+    def test_scans_fleet_dir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        fleet_dir = tmp_path / "fleet"
+        fleet_dir.mkdir()
+        for name in ("nova", "rex"):
+            d = fleet_dir / name
+            d.mkdir()
+            (d / "agent.yaml").write_text(f"name: {name}\n")
+        # Directory without agent.yaml should be skipped
+        (fleet_dir / "junk").mkdir()
+
+        agents = _scan_fleet()
+        assert len(agents) == 2
+        names = [a.name for a in agents]
+        assert "nova" in names
+        assert "rex" in names
+
+    def test_no_fleet_dir_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert _scan_fleet() == []
+
+
+class TestEnsureCompose:
+    """Test _ensure_compose() generation."""
+
+    def test_creates_compose_from_fleet(self, tmp_path, monkeypatch):
+        import yaml
+        monkeypatch.chdir(tmp_path)
+        fleet_dir = tmp_path / "fleet"
+        fleet_dir.mkdir()
+        for name in ("nova", "rex"):
+            d = fleet_dir / name
+            d.mkdir()
+            (d / "agent.yaml").write_text(f"name: {name}\n")
+            (d / "Dockerfile").write_text("FROM python:3.12-slim\n")
+
+        compose_path = _ensure_compose()
+        assert compose_path.exists()
+        with open(compose_path) as f:
+            compose = yaml.safe_load(f)
+        assert "nova" in compose["services"]
+        assert "rex" in compose["services"]
+
+    def test_preserves_existing_compose(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        compose_path = tmp_path / "docker-compose.yml"
+        compose_path.write_text("services:\n  existing: {}\n")
+        result = _ensure_compose()
+        assert result == compose_path
+        assert "existing" in result.read_text()
+
+
+class TestFleetCommands:
+    """Fleet commands use docker compose. Mock subprocess for unit tests."""
+
+    def _setup_fleet(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        fleet_dir = tmp_path / "fleet"
+        fleet_dir.mkdir()
+        for name in ("nova", "rex"):
+            d = fleet_dir / name
+            d.mkdir()
+            (d / "agent.yaml").write_text(f"name: {name}\n")
+            (d / "Dockerfile").write_text("FROM python:3.12-slim\n")
+            (d / ".env").write_text(f"TOKEN=test\n")
+
+    def test_fleet_start_no_runtime(self, tmp_path, capsys, monkeypatch):
+        self._setup_fleet(tmp_path, monkeypatch)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        failures = fleet_start()
+        assert failures == 1
+
+    def test_fleet_start_no_agents(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "docker")
+        failures = fleet_start()
+        out = capsys.readouterr().out
+        assert "No agents in fleet/" in out
+        assert failures == 0
+
+    def test_fleet_stop_no_runtime(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
+        failures = fleet_stop()
+        assert failures == 1
+
+    def test_fleet_status_no_runtime(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
         fleet_status()
         out = capsys.readouterr().out
-        assert "nova" in out
-        assert "rex" in out
-        assert "mod" in out
-        assert "citizen" in out
-        assert "moderator" in out
+        assert "No container runtime" in out
 
-    def test_fleet_status_filter_citizens_only(self, tmp_path, capsys, monkeypatch):
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
-        fleet_status(role="citizen")
-        out = capsys.readouterr().out
-        assert "nova" in out
-        assert "rex" in out
-        assert "mod" not in out
+    def test_fleet_start_warns_missing_env(self, tmp_path, capsys, monkeypatch):
+        """Fleet start warns when .env is missing but doesn't block."""
+        monkeypatch.chdir(tmp_path)
+        fleet_dir = tmp_path / "fleet" / "nova"
+        fleet_dir.mkdir(parents=True)
+        (fleet_dir / "agent.yaml").write_text("name: nova\n")
+        (fleet_dir / "Dockerfile").write_text("FROM python:3.12-slim\n")
+        # No .env file
 
-    def test_fleet_status_filter_moderator_only(self, tmp_path, capsys, monkeypatch):
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
-        fleet_status(role="moderator")
-        out = capsys.readouterr().out
-        assert "mod" in out
-        assert "nova" not in out
-        assert "rex" not in out
-
-    def test_fleet_start_with_no_runtime(self, tmp_path, capsys, monkeypatch):
-        """Fleet start should report failure if no container runtime."""
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
-        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: False)
-        failures = fleet_start()
-        out = capsys.readouterr().out
-        # All 3 agents should fail (no runtime)
-        assert failures == 3
-
-    def test_fleet_start_already_running(self, tmp_path, capsys, monkeypatch):
-        """Fleet start reports already-running containers without error."""
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
-        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: True)
-        failures = fleet_start()
-        out = capsys.readouterr().out
-        assert "already running" in out
-        assert failures == 0
-
-    def test_fleet_stop_nothing_running(self, tmp_path, capsys, monkeypatch):
-        """Fleet stop with no running containers is a no-op."""
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
-        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: False)
-        failures = fleet_stop()
-        out = capsys.readouterr().out
-        assert "not running" in out
-        assert failures == 0
-
-    def test_fleet_stop_role_filter(self, tmp_path, capsys, monkeypatch):
-        """fleet stop --role moderator should only stop the moderator."""
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
-        # Only mod is running
-        monkeypatch.setattr("agora.cli._is_container_running",
-                            lambda r, n: n == "agora-mod")
         import subprocess
+        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "docker")
         monkeypatch.setattr(
             subprocess, "run",
             lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
         )
-        failures = fleet_stop(role="moderator")
+        fleet_start()
         out = capsys.readouterr().out
-        assert "mod" in out
-        assert "nova" not in out
-
-    def test_mixed_fleet_with_non_container(self, tmp_path, capsys, monkeypatch):
-        """Fleet with echo (non-container) and citizen (container) agents."""
-        init_agent("echo-bot", path=tmp_path / "echo-bot", template="echo")
-        init_agent("nova", path=tmp_path / "nova", template="citizen")
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: "podman")
-        monkeypatch.setattr("agora.cli._is_container_running", lambda r, n: True)
-        failures = fleet_start()
-        out = capsys.readouterr().out
-        assert "non-container" in out  # echo skipped
-        assert "already running" in out  # nova detected
-        assert failures == 0
-
-    def test_fleet_status_display_names_and_roles(self, tmp_path, capsys, monkeypatch):
-        """Verify fleet status shows enriched registry fields."""
-        self._setup_fleet(tmp_path)
-        monkeypatch.setattr("agora.cli._detect_runtime", lambda: None)
-        fleet_status()
-        out = capsys.readouterr().out
-        # Header
-        assert "NAME" in out
-        assert "DISPLAY" in out
-        assert "ROLE" in out
-        assert "STATUS" in out
-        # Data
-        assert "Nova" in out
-        assert "Rex" in out
-        assert "Mod" in out
-
-
-class TestRegistryEnrichment:
-    """Test that init populates display_name and role in registry."""
-
-    def test_citizen_gets_citizen_role(self, tmp_path):
-        init_agent("nova", path=tmp_path / "nova", template="citizen")
-        from agora.registry import load_registry
-        entry = load_registry()["citizens"]["nova"]
-        assert entry["role"] == "citizen"
-        assert entry["display_name"] == "Nova"
-        assert entry["template"] == "citizen"
-
-    def test_moderator_gets_moderator_role(self, tmp_path):
-        init_agent("mod", path=tmp_path / "mod", template="moderator")
-        from agora.registry import load_registry
-        entry = load_registry()["citizens"]["mod"]
-        assert entry["role"] == "moderator"
-        assert entry["display_name"] == "Mod"
-
-    def test_bare_gets_bare_role(self, tmp_path):
-        init_agent("custom", path=tmp_path / "custom", template="bare")
-        from agora.registry import load_registry
-        entry = load_registry()["citizens"]["custom"]
-        assert entry["role"] == "bare"
-
-    def test_echo_gets_echo_role(self, tmp_path):
-        init_agent("ping", path=tmp_path / "ping", template="echo")
-        from agora.registry import load_registry
-        entry = load_registry()["citizens"]["ping"]
-        assert entry["role"] == "echo"
-
-    def test_hyphenated_name_display(self, tmp_path):
-        init_agent("my-cool-bot", path=tmp_path / "my-cool-bot", template="bare")
-        from agora.registry import load_registry
-        entry = load_registry()["citizens"]["my-cool-bot"]
-        assert entry["display_name"] == "My Cool Bot"
-
-    def test_registry_json_structure(self, tmp_path):
-        """Verify the registry JSON has correct structure after multi-agent init."""
-        init_agent("nova", path=tmp_path / "nova", template="citizen")
-        init_agent("mod", path=tmp_path / "mod", template="moderator")
-
-        from agora.registry import REGISTRY_PATH
-        raw = json.loads(REGISTRY_PATH.read_text())
-        assert "citizens" in raw
-        assert len(raw["citizens"]) == 2
-
-        nova = raw["citizens"]["nova"]
-        assert set(nova.keys()) == {"path", "template", "created", "display_name", "role"}
+        assert "Warning" in out
+        assert ".env" in out
