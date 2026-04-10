@@ -38,6 +38,7 @@ class TestInitAgent:
         assert (path / "mind.py").exists()
         assert (path / "CLAUDE.md").exists()
         assert (path / "Dockerfile").exists()
+        assert (path / "entrypoint.sh").exists()
         assert (path / ".env.example").exists()
         assert (path / ".gitignore").exists()
         assert (path / ".agora").exists()
@@ -93,6 +94,7 @@ class TestInitAgent:
         assert (path / "agent.py").exists()
         assert (path / "agent.yaml").exists()
         assert (path / "Dockerfile").exists()
+        assert (path / "entrypoint.sh").exists()
         assert (path / ".agora").exists()
         # Moderator should NOT have mind.py or CLAUDE.md
         assert not (path / "mind.py").exists()

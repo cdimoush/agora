@@ -18,6 +18,9 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
+[tool.setuptools.packages.find]
+include = ["agora*"]
+
 [tool.setuptools.package-data]
 "agora.templates" = ["**/*"]
 
