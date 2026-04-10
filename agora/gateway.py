@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
+import sys
 import time
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Self
 
 import discord
@@ -307,6 +310,45 @@ class Agora:
     async def wait_until_ready(self) -> None:
         """Block until the bot is connected and ready."""
         await self._ready_event.wait()
+
+    def watch_config(self, path: str | Path, interval: float = 2.0) -> None:
+        """Start watching a config file for changes. On change, exit for restart.
+
+        Relies on Docker restart policy (or supervisor) to bring the agent
+        back up with the new config.
+        """
+        path = Path(path)
+        if not path.exists():
+            logger.warning("watch_config: %s does not exist, skipping", path)
+            return
+        self._config_watch_task = asyncio.create_task(
+            self._poll_config(path, interval)
+        )
+
+    async def _poll_config(self, path: Path, interval: float) -> None:
+        """Poll config file mtime; exit on change."""
+        last_mtime = os.path.getmtime(path)
+        logger.info("Watching %s for changes (mtime=%s)", path, last_mtime)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                current_mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if current_mtime != last_mtime:
+                logger.info(
+                    "Config %s changed (mtime %s -> %s), restarting...",
+                    path, last_mtime, current_mtime,
+                )
+                # Validate before committing to restart
+                try:
+                    Config.from_yaml(path)
+                except Exception as e:
+                    logger.error("New config is invalid, ignoring change: %s", e)
+                    last_mtime = current_mtime
+                    continue
+                await self.stop()
+                sys.exit(0)
 
     def run(self) -> None:
         """Start the bot. Blocks until stopped (convenience wrapper)."""
