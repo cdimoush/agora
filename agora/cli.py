@@ -710,10 +710,11 @@ def _ensure_compose(agents: list[Path] | None = None) -> Path:
     return compose_path
 
 
-def fleet_start() -> int:
+def fleet_start(build: bool = False) -> int:
     """Start fleet using docker compose.
 
-    Builds and starts each service individually to isolate failures.
+    When --build is passed, builds and starts each service individually
+    to isolate failures. Otherwise, just starts existing images.
     Returns the number of failures.
     """
     import subprocess as _sp
@@ -756,16 +757,16 @@ def fleet_start() -> int:
     for svc in services:
         print(f"Starting {svc}...", end=" ", flush=True)
 
-        # Build
-        result = _sp.run(
-            [*compose_cmd, "build", svc],
-            capture_output=True, text=True, cwd=str(Path.cwd()),
-        )
-        if result.returncode != 0:
-            print("BUILD FAILED")
-            print(f"  {result.stderr.strip()[:200]}")
-            failures += 1
-            continue
+        if build:
+            result = _sp.run(
+                [*compose_cmd, "build", svc],
+                capture_output=True, text=True, cwd=str(Path.cwd()),
+            )
+            if result.returncode != 0:
+                print("BUILD FAILED")
+                print(f"  {result.stderr.strip()[:200]}")
+                failures += 1
+                continue
 
         # Up
         result = _sp.run(
@@ -861,7 +862,8 @@ def main(argv: list[str] | None = None) -> None:
     fleet_parser = sub.add_parser("fleet", help="Fleet management commands")
     fleet_sub = fleet_parser.add_subparsers(dest="fleet_command")
 
-    fleet_sub.add_parser("start", help="Build and start all fleet agents")
+    start_parser = fleet_sub.add_parser("start", help="Start all fleet agents")
+    start_parser.add_argument("--build", action="store_true", help="Rebuild images before starting")
     fleet_sub.add_parser("stop", help="Stop all fleet agents")
     fleet_sub.add_parser("status", help="Show fleet container status")
 
@@ -933,7 +935,7 @@ def main(argv: list[str] | None = None) -> None:
         show_status()
     elif args.command == "fleet":
         if args.fleet_command == "start":
-            failures = fleet_start()
+            failures = fleet_start(build=args.build)
             sys.exit(failures)
         elif args.fleet_command == "stop":
             failures = fleet_stop()

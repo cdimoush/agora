@@ -48,6 +48,7 @@ class Agora:
         self._ready_event = asyncio.Event()
         self._run_task = None
         self._scheduler_task = None
+        self._last_dm_channel: discord.DMChannel | None = None
 
         # Detect which API the subclass uses
         self._use_legacy_api = (
@@ -141,10 +142,22 @@ class Agora:
     async def send(self, channel: str, content: str) -> None:
         """Send a message to a named channel. Enforces exchange cap.
 
+        For DMs, sends to the last DM interlocutor (cached on receipt).
         Raises ValueError if channel is not in config.
         Logs warning and skips cap check for write-only channels.
         """
         self._ensure_connected()
+
+        # DM send path — use cached DM channel
+        if channel == "dm":
+            if self._last_dm_channel is None:
+                logger.info("send('dm', ...) skipped — no DM received yet")
+                return
+            content = content[: self.config.max_response_length]
+            for chunk in chunk_message(content):
+                await self._last_dm_channel.send(chunk)
+            return
+
         mode = self.config.channels.get(channel)
         if mode is None:
             available = ", ".join(sorted(self.config.channels.keys()))
@@ -343,7 +356,11 @@ class Agora:
             return
 
         # Step 2: Check channel config (pre-trace)
-        channel_name = discord_message.channel.name
+        if isinstance(discord_message.channel, discord.DMChannel):
+            channel_name = "dm"
+            self._last_dm_channel = discord_message.channel
+        else:
+            channel_name = discord_message.channel.name
         mode = self._get_channel_mode(channel_name)
         if mode is None or mode == "write-only":
             return
@@ -371,14 +388,15 @@ class Agora:
                     return
                 s["decision"] = "pass"
 
-            # Step 4.5: Exchange cap check
-            with self.span("exchange_cap") as s:
-                if await self._exchange_cap.is_capped(discord_message.channel):
-                    s["decision"] = "filtered"
-                    s["reason"] = f"exchange cap reached (cap={self.config.exchange_cap})"
-                    filter_step, filter_reason = "exchange_cap", s["reason"]
-                    return
-                s["decision"] = "pass"
+            # Step 4.5: Exchange cap check (skipped for DMs)
+            if channel_name != "dm":
+                with self.span("exchange_cap") as s:
+                    if await self._exchange_cap.is_capped(discord_message.channel):
+                        s["decision"] = "filtered"
+                        s["reason"] = f"exchange cap reached (cap={self.config.exchange_cap})"
+                        filter_step, filter_reason = "exchange_cap", s["reason"]
+                        return
+                    s["decision"] = "pass"
 
             if self._use_legacy_api:
                 # Legacy path: should_respond + generate_response
@@ -533,6 +551,8 @@ class Agora:
                     self._channel_ids[channel.name] = channel.id
 
         for name in self.config.channels:
+            if name == "dm":
+                continue  # DMs are not guild channels
             if name not in self._channel_map:
                 logger.warning(
                     f"Channel '{name}' in config but not found on server"
@@ -592,6 +612,8 @@ class Agora:
                 )
 
     def _get_channel_mode(self, channel_name: str) -> str | None:
+        if channel_name == "dm":
+            return self.config.channels.get("dm")
         if not self.config.channels:
             return "mention-only"
         return self._channel_map.get(channel_name)
