@@ -95,12 +95,31 @@ class Dev(Agora):
             self._touch_session(message.author_id, session_id)
 
         if response:
+            # Parse channel directives: [send:channel-name] message
+            dm_reply, directives = self.mind.parse_channel_directives(response)
+
+            for directive in directives:
+                ch = directive["channel"]
+                msg = directive["message"]
+                try:
+                    await self.send(ch, msg)
+                    await self._write_journal_entry(
+                        trigger="dm",
+                        channel=ch,
+                        event_summary=f"Sent to #{ch} from DM: {msg[:100]}",
+                        spoke=True,
+                    )
+                except (ValueError, Exception) as e:
+                    logger.warning("Failed to send to #%s: %s", ch, e)
+
             await self._write_journal_entry(
                 trigger="dm",
                 channel="dm",
-                event_summary=f"Operator asked: {content[:80]}. I responded: {response[:80]}",
+                event_summary=f"Operator asked: {content[:80]}. I responded: {(dm_reply or response)[:80]}",
                 spoke=True,
             )
+
+            return dm_reply or response
 
         return response
 
