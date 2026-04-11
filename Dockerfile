@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# System deps: Node.js, git, gh CLI, Claude CLI
-RUN apt-get update && apt-get install -y curl git libicu-dev && \
+# System deps: git, gh CLI, Claude Code
+RUN apt-get update && apt-get install -y curl git && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g @anthropic-ai/claude-code && \
@@ -12,18 +12,7 @@ RUN apt-get update && apt-get install -y curl git libicu-dev && \
     apt-get update && apt-get install -y gh && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Beads CLI — copied from host at build time by agora.sh
-# (compiled against ICU 74; container may have newer ICU)
-COPY bd /usr/local/bin/bd
-RUN chmod +x /usr/local/bin/bd && \
-    ICU_VER=$(ls /usr/lib/x86_64-linux-gnu/libicuuc.so.* 2>/dev/null | head -1 | grep -oP '\d+$') && \
-    if [ -n "$ICU_VER" ] && [ "$ICU_VER" != "74" ]; then \
-      ln -sf /usr/lib/x86_64-linux-gnu/libicui18n.so.$ICU_VER /usr/lib/x86_64-linux-gnu/libicui18n.so.74 && \
-      ln -sf /usr/lib/x86_64-linux-gnu/libicuuc.so.$ICU_VER /usr/lib/x86_64-linux-gnu/libicuuc.so.74 && \
-      ln -sf /usr/lib/x86_64-linux-gnu/libicudata.so.$ICU_VER /usr/lib/x86_64-linux-gnu/libicudata.so.74; \
-    fi
-
-# Install agora library dependencies (editable install happens at startup from worktree)
+# Pre-install agora dependencies (editable install happens at startup from mount)
 COPY pyproject.toml /tmp/agora-src/
 COPY agora/ /tmp/agora-src/agora/
 RUN pip install /tmp/agora-src/ && rm -rf /tmp/agora-src/ && pip uninstall -y agora
@@ -32,20 +21,17 @@ RUN pip install /tmp/agora-src/ && rm -rf /tmp/agora-src/ && pip uninstall -y ag
 RUN useradd -m -u 1000 -s /bin/bash agent
 
 # Git config
-RUN git config --global user.name "agora-dev" && \
-    git config --global user.email "dev@agora.local" && \
-    git config --global --add safe.directory /workspace/agora && \
+RUN git config --global --add safe.directory /home/agent/agora && \
     git config --global credential.https://github.com.helper "" && \
     git config --global credential.https://github.com.helper "!/usr/bin/gh auth git-credential"
 
 RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 
-# Copy agent code from agent/ subfolder
-WORKDIR /agent
-COPY agent/agent.py agent/mind.py agent/agent.yaml agent/CLAUDE.md ./
-COPY agent/entrypoint.sh /agent/entrypoint.sh
-RUN chmod +x /agent/entrypoint.sh && chown -R agent:agent /agent
+# Entrypoint — copied in, everything else comes from mount
+COPY agent/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER agent
+WORKDIR /home/agent
 
-ENTRYPOINT ["/agent/entrypoint.sh"]
+ENTRYPOINT ["entrypoint.sh"]
