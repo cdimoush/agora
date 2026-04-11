@@ -107,6 +107,8 @@ def compose_service_block(agent_dir: Path) -> dict:
         beads_dir = Path.cwd() / ".beads"
         if beads_dir.is_dir():
             volumes.append(f"./.beads:/home/ubuntu/agora/.beads:rw")
+            service["environment"].append(f"BEADS_ACTOR={name}")
+            service["environment"].append("BD_DOLT_AUTO_PUSH=off")
 
         # Mount gh credentials so dev agents can git push
         gh_config = Path.home() / ".config" / "gh"
