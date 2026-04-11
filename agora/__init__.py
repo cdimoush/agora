@@ -20,7 +20,7 @@ from agora.context import (
 )
 from agora.errors import ErrorContext
 from agora.events import Event, EventCollector, EventProcessor
-from agora.message import Message
+from agora.message import Attachment, Message
 from agora.gateway import Agora
 from agora.telemetry import (
     Span,
@@ -45,6 +45,7 @@ def __getattr__(name: str):
 __all__ = [
     "Agora",
     "AgoraBot",
+    "Attachment",
     "Config",
     "ContextError",
     "ContainerContext",
