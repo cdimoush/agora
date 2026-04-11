@@ -13,11 +13,13 @@ import os
 import random
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 from agora import Agora, Message
 from agora.errors import ErrorContext
+from agora.voice import TranscriptionError, is_audio_file, transcribe
 from mind import DevMind
 
 logger = logging.getLogger("agora.dev")
@@ -29,14 +31,23 @@ _ERROR_LINES = [
 ]
 
 
+SESSION_TTL = 24 * 60 * 60  # 24 hours in seconds
+SESSIONS_FILE = "data/sessions.json"
+
+
 class Dev(Agora):
     """A developer agent who codes via DM and socializes in channels."""
 
     def __init__(self, config, project_dir: Path | None = None):
         super().__init__(config)
         self._project_dir = project_dir or Path(__file__).resolve().parent
-        self._workspace = Path("/workspace/agora")
+        self._workspace = Path.home()
         self.mind = DevMind(self._project_dir)
+        # Session store: {user_id: {"session_id": str, "last_active": float}}
+        self._sessions: dict[int, dict] = {}
+        self._sessions_path = self._project_dir / SESSIONS_FILE
+        self._load_sessions()
+        self._install_restart_handler()
 
     @classmethod
     def from_config(cls, path: str) -> Dev:
@@ -53,8 +64,11 @@ class Dev(Agora):
         return await self._handle_channel(message)
 
     async def _handle_dm(self, message: Message) -> str | None:
-        """Dev mode: full Claude CLI with dev tooling."""
+        """Dev mode: full Claude CLI with dev tooling and session resume."""
         logger.info("DM from %s: %s", message.author_name, message.content[:100])
+
+        # Transcribe any audio attachments
+        content = await self._content_with_transcriptions(message)
 
         journal_entries = self.mind.read_journal()
 
@@ -64,22 +78,52 @@ class Dev(Agora):
         bd_ready = await self._run_cmd("bd ready", cwd=self._workspace)
 
         prompt = self.mind.build_dev_prompt(
-            operator_message=message.content,
+            operator_message=content,
             git_branch=git_branch or "unknown",
             git_status=git_status or "(clean)",
             bd_ready=bd_ready or "(no issues ready)",
             journal_entries=journal_entries,
         )
 
-        response = await self._call_claude(prompt, dev_mode=True)
+        # Session resume: check for active session for this user
+        session_id = self._get_session(message.author_id)
+
+        response, new_session_id = await self._call_claude(
+            prompt, dev_mode=True, session_id=session_id,
+        )
+
+        # Store the session for future --resume
+        if new_session_id:
+            self._touch_session(message.author_id, new_session_id)
+        elif session_id:
+            self._touch_session(message.author_id, session_id)
 
         if response:
+            # Parse channel directives: [send:channel-name] message
+            dm_reply, directives = self.mind.parse_channel_directives(response)
+
+            for directive in directives:
+                ch = directive["channel"]
+                msg = directive["message"]
+                try:
+                    await self.send(ch, msg)
+                    await self._write_journal_entry(
+                        trigger="dm",
+                        channel=ch,
+                        event_summary=f"Sent to #{ch} from DM: {msg[:100]}",
+                        spoke=True,
+                    )
+                except (ValueError, Exception) as e:
+                    logger.warning("Failed to send to #%s: %s", ch, e)
+
             await self._write_journal_entry(
                 trigger="dm",
                 channel="dm",
-                event_summary=f"Operator asked: {message.content[:80]}. I responded: {response[:80]}",
+                event_summary=f"Operator asked: {content[:80]}. I responded: {(dm_reply or response)[:80]}",
                 spoke=True,
             )
+
+            return dm_reply or response
 
         return response
 
@@ -88,6 +132,9 @@ class Dev(Agora):
         logger.info(
             "on_message from %s in #%s", message.author_name, message.channel_name
         )
+
+        # Transcribe any audio attachments
+        content = await self._content_with_transcriptions(message)
 
         history = await self.get_history(message.channel_name, limit=10)
         history_lines = []
@@ -103,20 +150,20 @@ class Dev(Agora):
 
         prompt = self.mind.build_reactive_prompt(
             author_name=message.author_name,
-            message_content=message.content,
+            message_content=content,
             channel_name=message.channel_name,
             history_lines=history_lines,
             roster=roster,
             journal_entries=journal_entries,
         )
 
-        response = await self._call_claude(prompt, dev_mode=False)
+        response, _ = await self._call_claude(prompt, dev_mode=False)
 
         if response:
             await self._write_journal_entry(
                 trigger="reactive",
                 channel=message.channel_name,
-                event_summary=f"In #{message.channel_name}, {message.author_name} said: {message.content[:100]}. I replied: {response[:100]}",
+                event_summary=f"In #{message.channel_name}, {message.author_name} said: {content[:100]}. I replied: {response[:100]}",
                 spoke=True,
             )
 
@@ -146,7 +193,7 @@ class Dev(Agora):
         prompt = self.mind.build_scan_prompt(
             channels_history, journal_entries, bd_ready=bd_ready or ""
         )
-        raw = await self._call_claude(prompt, dev_mode=False)
+        raw, _ = await self._call_claude(prompt, dev_mode=False)
 
         if not raw:
             return None
@@ -177,10 +224,110 @@ class Dev(Agora):
         logger.error("Dev error [%s]: %s", context.stage, error)
         return random.choice(_ERROR_LINES)
 
+    # -- Session management ------------------------------------------------
+
+    def _get_session(self, user_id: int) -> str | None:
+        """Get an active session ID for a user, or None if expired/missing."""
+        entry = self._sessions.get(user_id)
+        if not entry:
+            return None
+        age = time.monotonic() - entry["last_active"]
+        if age > SESSION_TTL:
+            logger.info("Session for user %d expired (age=%.0fs)", user_id, age)
+            del self._sessions[user_id]
+            return None
+        return entry["session_id"]
+
+    def _touch_session(self, user_id: int, session_id: str) -> None:
+        """Create or refresh a session for a user."""
+        self._sessions[user_id] = {
+            "session_id": session_id,
+            "last_active": time.monotonic(),
+        }
+        self._save_sessions()
+
+    def _load_sessions(self) -> None:
+        """Load sessions from disk (survives restart)."""
+        if not self._sessions_path.exists():
+            return
+        try:
+            data = json.loads(self._sessions_path.read_text())
+            now = time.monotonic()
+            for uid_str, entry in data.items():
+                # Restore with current monotonic base — age is approximate
+                self._sessions[int(uid_str)] = {
+                    "session_id": entry["session_id"],
+                    "last_active": now,
+                }
+            logger.info("Loaded %d sessions from disk", len(self._sessions))
+        except Exception as e:
+            logger.warning("Failed to load sessions: %s", e)
+
+    def _save_sessions(self) -> None:
+        """Persist sessions to disk."""
+        try:
+            data = {}
+            for uid, entry in self._sessions.items():
+                data[str(uid)] = {"session_id": entry["session_id"]}
+            self._sessions_path.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.warning("Failed to save sessions: %s", e)
+
+    def _install_restart_handler(self) -> None:
+        """Install SIGUSR1 handler for graceful self-restart."""
+        def _handle_restart(signum, frame):
+            logger.info("SIGUSR1 received — saving state and restarting")
+            self._save_sessions()
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        signal.signal(signal.SIGUSR1, _handle_restart)
+
+    # -- Audio transcription -----------------------------------------------
+
+    async def _content_with_transcriptions(self, message: Message) -> str:
+        """Return message content with audio attachments transcribed to text."""
+        audio_attachments = [
+            a for a in message.attachments if is_audio_file(a.filename)
+        ]
+        if not audio_attachments:
+            return message.content
+
+        parts = []
+        if message.content:
+            parts.append(message.content)
+
+        for attachment in audio_attachments:
+            suffix = Path(attachment.filename).suffix or ".ogg"
+            tmp = None
+            try:
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=suffix, prefix="agora-voice-", delete=False,
+                )
+                tmp.close()
+                await attachment.save(tmp.name)
+                text = await transcribe(tmp.name)
+                logger.info("Transcribed %s: %d chars", attachment.filename, len(text))
+                parts.append(f"[Voice message transcript: {text}]")
+            except TranscriptionError as e:
+                logger.warning("Transcription failed for %s: %s", attachment.filename, e)
+                parts.append(
+                    f"[Audio file received: {attachment.filename} — "
+                    f"transcription unavailable: {e}]"
+                )
+            finally:
+                if tmp is not None:
+                    try:
+                        os.unlink(tmp.name)
+                    except OSError:
+                        pass
+
+        return "\n".join(parts)
+
     # -- Claude CLI -------------------------------------------------------
 
-    async def _call_claude(self, prompt: str, dev_mode: bool = False) -> str | None:
-        """Call Claude CLI with mode-specific settings."""
+    async def _call_claude(
+        self, prompt: str, dev_mode: bool = False, session_id: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Call Claude CLI. Returns (response_text, session_id)."""
         budget = "10.00" if dev_mode else "0.25"
         timeout = 600 if dev_mode else 60
         cwd = str(self._workspace) if dev_mode and self._workspace.exists() else str(self._project_dir)
@@ -205,6 +352,9 @@ class Dev(Agora):
                 "--max-budget-usd", budget,
                 "--dangerously-skip-permissions",
             ]
+
+            if session_id:
+                cmd.extend(["--resume", session_id])
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -231,11 +381,17 @@ class Dev(Agora):
                     duration_ms=round(elapsed_ms, 2),
                 )
                 logger.warning("Claude subprocess timed out (%ds)", timeout)
-                return None
+                return None, None
 
             elapsed_ms = (time.monotonic() - start) * 1000
 
             if proc.returncode != 0:
+                error_text = stderr.decode()
+                # Handle expired Claude session — retry without --resume
+                if "No conversation found" in error_text and session_id:
+                    logger.warning("Session %s expired in Claude, starting fresh", session_id)
+                    return await self._call_claude(prompt, dev_mode=dev_mode, session_id=None)
+
                 s["decision"] = "error"
                 s["error"] = f"exit={proc.returncode}"
                 self.emit("inference.error",
@@ -243,8 +399,8 @@ class Dev(Agora):
                     error=f"exit={proc.returncode}",
                     duration_ms=round(elapsed_ms, 2),
                 )
-                logger.error("Claude exit=%d stderr=%s", proc.returncode, stderr.decode()[:500])
-                return None
+                logger.error("Claude exit=%d stderr=%s", proc.returncode, error_text[:500])
+                return None, None
 
             try:
                 data = json.loads(stdout.decode())
@@ -256,9 +412,11 @@ class Dev(Agora):
                     duration_ms=round(elapsed_ms, 2),
                 )
                 logger.error("Failed to parse Claude JSON output")
-                return None
+                return None, None
 
             result = data.get("result", "") or None
+            returned_session_id = data.get("session_id")
+
             if result:
                 s["decision"] = "pass"
                 s["response_length"] = len(result)
@@ -275,7 +433,7 @@ class Dev(Agora):
                 duration_ms=round(elapsed_ms, 2),
             )
 
-            return result
+            return result, returned_session_id
 
     # -- Helpers -----------------------------------------------------------
 

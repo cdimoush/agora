@@ -2,7 +2,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import discord
+
+
+class Attachment:
+    """Wrapper for a Discord file attachment."""
+
+    __slots__ = ("filename", "url", "content_type", "size", "_discord_attachment")
+
+    def __init__(self, discord_attachment: discord.Attachment):
+        self.filename: str = discord_attachment.filename
+        self.url: str = discord_attachment.url
+        self.content_type: str = discord_attachment.content_type or ""
+        self.size: int = discord_attachment.size
+        self._discord_attachment = discord_attachment
+
+    async def save(self, path: str | Path) -> Path:
+        """Download and save the attachment to a local file."""
+        path = Path(path)
+        await self._discord_attachment.save(path)
+        return path
+
+    def __repr__(self) -> str:
+        return f"Attachment({self.filename!r}, {self.size} bytes)"
 
 
 class Message:
@@ -67,4 +91,9 @@ class Message:
     @property
     def id(self) -> int:
         return self._msg.id
+
+    @property
+    def attachments(self) -> list[Attachment]:
+        """File attachments on this message (images, audio, documents)."""
+        return [Attachment(a) for a in self._msg.attachments]
 
