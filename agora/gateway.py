@@ -19,6 +19,7 @@ import discord
 from agora.chunker import chunk_message
 from agora.config import Config
 from agora.errors import ErrorContext
+from agora.events import Event, EventCollector, EventProcessor
 from agora.message import Message
 from agora.safety import ExchangeCapChecker
 from agora.scheduler import SchedulerTask, parse_interval
@@ -48,6 +49,10 @@ class Agora:
         self._member_map: dict[str, int] = {}
         self._mention_pattern = None  # compiled regex, built in _resolve_members
         self._processors: list = []
+        data_dir = Path(config.data_dir) if config.data_dir else None
+        self._collector = EventCollector(
+            config.name or config.token_env, data_dir
+        )
         self._ready_event = asyncio.Event()
         self._run_task = None
         self._scheduler_task = None
@@ -261,10 +266,22 @@ class Agora:
             "message_id": discord_message.id,
             "author": discord_message.author.display_name,
         })
+        self._collector._trace_id = trace_id
         return trace_id
 
     def _end_trace(self) -> None:
         _trace_ctx.set(None)
+        self._collector._trace_id = None
+
+    # ── Public: events ─────────────────────────────────────────
+
+    def emit(self, event_type: str, **payload) -> Event:
+        """Emit a telemetry event."""
+        return self._collector.emit(event_type, **payload)
+
+    def add_event_processor(self, processor: EventProcessor) -> None:
+        """Register an event processor for real-time event consumption."""
+        self._collector.add_processor(processor)
 
     # ── Public: lifecycle ─────────────────────────────────────
 
@@ -357,26 +374,30 @@ class Agora:
 
     async def _on_schedule_tick(self) -> None:
         """Called by the scheduler. Dispatches on_schedule results via send()."""
+        self._collector.start_session()
         try:
-            result = await self.on_schedule()
-        except Exception as e:
-            ctx = ErrorContext(stage="on_schedule")
             try:
-                await self.on_error(e, ctx)
-            except Exception:
-                logger.error("on_error itself raised during on_schedule — swallowing")
-            return
-
-        if not result:
-            return
-
-        for channel_name, content in result.items():
-            if not content:
-                continue
-            try:
-                await self.send(channel_name, content)
+                result = await self.on_schedule()
             except Exception as e:
-                logger.error(f"on_schedule send to '{channel_name}' failed: {e}")
+                ctx = ErrorContext(stage="on_schedule")
+                try:
+                    await self.on_error(e, ctx)
+                except Exception:
+                    logger.error("on_error itself raised during on_schedule — swallowing")
+                return
+
+            if not result:
+                return
+
+            for channel_name, content in result.items():
+                if not content:
+                    continue
+                try:
+                    await self.send(channel_name, content)
+                except Exception as e:
+                    logger.error(f"on_schedule send to '{channel_name}' failed: {e}")
+        finally:
+            self._collector.end_session()
 
     # ── Internal: discord.py event handlers ───────────────────
 
@@ -407,8 +428,9 @@ class Agora:
         if mode is None or mode == "write-only":
             return
 
-        # ── Trace starts ──
+        # ── Trace + session start ──
         self._start_trace(channel_name, discord_message)
+        self._collector.start_session()
         outcome = "filtered"
         filter_step = None
         filter_reason = None
@@ -579,6 +601,7 @@ class Agora:
                     s["filter_reason"] = filter_reason
                 elif outcome == "responded":
                     s["response_preview"] = response_preview
+            self._collector.end_session()
             self._end_trace()
 
     # ── Internal: helpers ─────────────────────────────────────
