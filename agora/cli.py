@@ -103,6 +103,11 @@ def compose_service_block(agent_dir: Path) -> dict:
         # Mount fleet dir so agent can self-edit (agent.py, mind.py, etc.)
         volumes.append(f"./{rel_dir}:/agent:rw")
 
+        # Mount .beads/ so agent can use beads issue tracker
+        beads_dir = Path.cwd() / ".beads"
+        if beads_dir.is_dir():
+            volumes.append(f"./.beads:/home/ubuntu/agora/.beads:rw")
+
         # Mount gh credentials so dev agents can git push
         gh_config = Path.home() / ".config" / "gh"
         if gh_config.is_dir():
