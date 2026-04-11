@@ -1,8 +1,8 @@
-"""Tests for agora.voice — audio transcription via Vox CLI."""
+"""Tests for agora.voice — audio transcription module."""
 
-import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,153 +29,65 @@ class TestIsAudioFile:
         assert is_audio_file("clip.Mp3") is True
 
 
-def _mock_proc(returncode=0, stdout=b"", stderr=b""):
-    """Create a mock asyncio subprocess with given outputs."""
-    proc = AsyncMock()
-    proc.returncode = returncode
-    proc.communicate = AsyncMock(return_value=(stdout, stderr))
-    proc.kill = AsyncMock()
-    proc.wait = AsyncMock()
-    return proc
-
-
 class TestTranscribe:
-    @pytest.mark.asyncio
-    async def test_vox_not_installed(self, tmp_path):
-        audio_file = tmp_path / "test.ogg"
-        audio_file.write_bytes(b"fake audio data")
-
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(TranscriptionError, match="vox CLI not installed"):
-                await transcribe(audio_file)
-
     @pytest.mark.asyncio
     async def test_missing_api_key(self, tmp_path):
         audio_file = tmp_path / "test.ogg"
         audio_file.write_bytes(b"fake audio data")
 
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {}, clear=True):
-                with pytest.raises(TranscriptionError, match="No OpenAI API key"):
-                    await transcribe(audio_file)
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(TranscriptionError, match="No OpenAI API key"):
+                await transcribe(audio_file)
 
     @pytest.mark.asyncio
     async def test_file_not_found(self):
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with pytest.raises(TranscriptionError, match="not found"):
-                    await transcribe("/nonexistent/audio.ogg")
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            with pytest.raises(TranscriptionError, match="not found"):
+                await transcribe("/nonexistent/audio.ogg")
 
     @pytest.mark.asyncio
-    async def test_successful_json_transcription(self, tmp_path):
+    async def test_successful_transcription(self, tmp_path):
         audio_file = tmp_path / "test.ogg"
         audio_file.write_bytes(b"fake audio data")
 
-        result_json = json.dumps({"text": "Hello, this is a test transcript.", "duration_s": 5.2, "chunks": 1, "error": ""})
-        proc = _mock_proc(returncode=0, stdout=result_json.encode())
+        mock_response = SimpleNamespace(text="Hello, this is a test transcript.")
+        mock_client = AsyncMock()
+        mock_client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
 
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    result = await transcribe(audio_file)
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            with patch("openai.AsyncOpenAI", return_value=mock_client):
+                result = await transcribe(audio_file)
 
         assert result == "Hello, this is a test transcript."
-
-    @pytest.mark.asyncio
-    async def test_successful_plain_text_transcription(self, tmp_path):
-        """Vox without --json flag returns plain text on stdout."""
-        audio_file = tmp_path / "test.ogg"
-        audio_file.write_bytes(b"fake audio data")
-
-        proc = _mock_proc(returncode=0, stdout=b"Hello plain text")
-
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    result = await transcribe(audio_file)
-
-        assert result == "Hello plain text"
+        mock_client.audio.transcriptions.create.assert_awaited_once()
+        call_kwargs = mock_client.audio.transcriptions.create.call_args[1]
+        assert call_kwargs["model"] == "gpt-4o-mini-transcribe"
 
     @pytest.mark.asyncio
     async def test_empty_transcription_raises(self, tmp_path):
         audio_file = tmp_path / "test.ogg"
         audio_file.write_bytes(b"fake audio data")
 
-        result_json = json.dumps({"text": "", "duration_s": 0, "chunks": 0, "error": ""})
-        proc = _mock_proc(returncode=0, stdout=result_json.encode())
+        mock_response = SimpleNamespace(text="")
+        mock_client = AsyncMock()
+        mock_client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
 
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    with pytest.raises(TranscriptionError, match="empty"):
-                        await transcribe(audio_file)
-
-    @pytest.mark.asyncio
-    async def test_vox_json_error_field(self, tmp_path):
-        audio_file = tmp_path / "test.ogg"
-        audio_file.write_bytes(b"fake audio data")
-
-        result_json = json.dumps({"text": "", "error": "rate limit exceeded"})
-        proc = _mock_proc(returncode=0, stdout=result_json.encode())
-
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    with pytest.raises(TranscriptionError, match="rate limit"):
-                        await transcribe(audio_file)
-
-    @pytest.mark.asyncio
-    async def test_exit_code_3_missing_key(self, tmp_path):
-        audio_file = tmp_path / "test.ogg"
-        audio_file.write_bytes(b"fake audio data")
-
-        proc = _mock_proc(returncode=3, stderr=b"missing OPENAI_API_KEY")
-
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    with pytest.raises(TranscriptionError, match="No OpenAI API key"):
-                        await transcribe(audio_file)
-
-    @pytest.mark.asyncio
-    async def test_exit_code_2_api_error(self, tmp_path):
-        audio_file = tmp_path / "test.ogg"
-        audio_file.write_bytes(b"fake audio data")
-
-        proc = _mock_proc(returncode=2, stderr=b"API rate limit")
-
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    with pytest.raises(TranscriptionError, match="Vox API error"):
-                        await transcribe(audio_file)
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            with patch("openai.AsyncOpenAI", return_value=mock_client):
+                with pytest.raises(TranscriptionError, match="empty"):
+                    await transcribe(audio_file)
 
     @pytest.mark.asyncio
     async def test_explicit_api_key(self, tmp_path):
         audio_file = tmp_path / "test.ogg"
         audio_file.write_bytes(b"fake audio data")
 
-        result_json = json.dumps({"text": "transcript", "duration_s": 1.0, "chunks": 1, "error": ""})
-        proc = _mock_proc(returncode=0, stdout=result_json.encode())
+        mock_response = SimpleNamespace(text="transcript")
+        mock_client = AsyncMock()
+        mock_client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
 
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
-                result = await transcribe(audio_file, api_key="explicit-key")
+        with patch("openai.AsyncOpenAI", return_value=mock_client) as mock_cls:
+            result = await transcribe(audio_file, api_key="explicit-key")
 
         assert result == "transcript"
-        # Verify the env passed to subprocess contains the explicit key
-        call_kwargs = mock_exec.call_args[1]
-        assert call_kwargs["env"]["OPENAI_API_KEY"] == "explicit-key"
-
-    @pytest.mark.asyncio
-    async def test_general_failure_exit_code(self, tmp_path):
-        audio_file = tmp_path / "test.ogg"
-        audio_file.write_bytes(b"fake audio data")
-
-        proc = _mock_proc(returncode=1, stderr=b"unsupported format")
-
-        with patch("shutil.which", return_value="/usr/local/bin/vox"):
-            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
-                with patch("asyncio.create_subprocess_exec", return_value=proc):
-                    with pytest.raises(TranscriptionError, match="Vox failed"):
-                        await transcribe(audio_file)
+        mock_cls.assert_called_once_with(api_key="explicit-key")
