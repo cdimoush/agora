@@ -19,6 +19,7 @@ from agora.context import (
     detect_runtime,
 )
 from agora.errors import ErrorContext
+from agora.events import Event, EventCollector, EventProcessor
 from agora.message import Message
 from agora.gateway import Agora
 from agora.telemetry import (
@@ -49,6 +50,9 @@ __all__ = [
     "ContainerContext",
     "ContainerCrashed",
     "ErrorContext",
+    "Event",
+    "EventCollector",
+    "EventProcessor",
     "ExecResult",
     "ExecutionContext",
     "ImageBuildError",
