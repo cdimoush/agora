@@ -1,6 +1,0 @@
-# Agora agent configuration
-token_env: DISCORD_BOT_TOKEN
-
-channels:
-  general: mention-only
-  bot-chat: subscribe

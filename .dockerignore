@@ -1,0 +1,25 @@
+# Host-only files
+agora.sh
+.git
+.beads
+.env
+.env.*
+!.env.example
+.dockerignore
+
+# Runtime data
+data/
+logs/
+
+# Python artifacts
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Not needed in image
+.claude/
+docs/
+tests/
+examples/
+*.md

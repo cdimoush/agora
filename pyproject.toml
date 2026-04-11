@@ -21,8 +21,5 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["agora*"]
 
-[tool.setuptools.package-data]
-"agora.templates" = ["**/*"]
-
 [project.scripts]
 agora = "agora.cli:main"
