@@ -15,7 +15,7 @@ BASENAME="$(basename "$SCRIPT_DIR")"
 CONTAINER_NAME="agora-${BASENAME}"
 IMAGE_NAME="agora-${BASENAME}:latest"
 
-CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+BD_BIN="${BD_BIN:-$(which bd 2>/dev/null || echo "$HOME/.local/bin/bd")}"
 GH_CONFIG="${GH_CONFIG:-$HOME/.config/gh}"
 ENV_FILE="${SCRIPT_DIR}/agent/.env"
 
@@ -24,7 +24,18 @@ echo "[agora] Image: ${IMAGE_NAME}"
 
 cmd_build() {
     echo "[agora] Building ${IMAGE_NAME}..."
+
+    # Stage the beads binary for Docker COPY
+    if [ -f "$BD_BIN" ]; then
+        cp "$BD_BIN" "${SCRIPT_DIR}/bd"
+    else
+        echo "[agora] ERROR: beads CLI not found at ${BD_BIN}"
+        echo "[agora] Set BD_BIN=/path/to/bd or install beads first"
+        exit 1
+    fi
+
     docker build -t "${IMAGE_NAME}" "${SCRIPT_DIR}"
+    rm -f "${SCRIPT_DIR}/bd"
     echo "[agora] Built ${IMAGE_NAME}"
 }
 
@@ -56,8 +67,8 @@ cmd_run() {
         --name "${CONTAINER_NAME}" \
         --restart unless-stopped \
         ${ENV_ARGS} \
-        -v "${CLAUDE_DIR}:/tmp/.claude-host:ro" \
-        -v "${SCRIPT_DIR}:/home/agent/agora:rw" \
+        -e "BD_DOLT_AUTO_PUSH=off" \
+        -v "${SCRIPT_DIR}:/home/agent:rw" \
         -v "${GH_CONFIG}:/home/agent/.config/gh:ro" \
         "${IMAGE_NAME}"
 
