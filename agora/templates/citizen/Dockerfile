@@ -20,7 +20,8 @@ RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 WORKDIR /agent
 COPY fleet/{{name}}/ .
 COPY fleet/{{name}}/entrypoint.sh /agent/entrypoint.sh
-RUN chmod +x /agent/entrypoint.sh && chown -R agent:agent /agent
+RUN mkdir -p /agent/data/events && \
+    chmod +x /agent/entrypoint.sh && chown -R agent:agent /agent
 
 USER agent
 
