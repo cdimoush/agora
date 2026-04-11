@@ -100,6 +100,9 @@ def compose_service_block(agent_dir: Path) -> dict:
         volumes.append(f"./worktrees/{name}:/workspace/agora:rw")
         service.setdefault("environment", []).append("AGORA_DEV_MODE=1")
 
+        # Mount fleet dir so agent can self-edit (agent.py, mind.py, etc.)
+        volumes.append(f"./{rel_dir}:/agent:rw")
+
         # Mount gh credentials so dev agents can git push
         gh_config = Path.home() / ".config" / "gh"
         if gh_config.is_dir():
