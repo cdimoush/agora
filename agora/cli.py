@@ -100,6 +100,16 @@ def compose_service_block(agent_dir: Path) -> dict:
         volumes.append(f"./worktrees/{name}:/workspace/agora:rw")
         service.setdefault("environment", []).append("AGORA_DEV_MODE=1")
 
+        # Mount fleet dir so agent can self-edit (agent.py, mind.py, etc.)
+        volumes.append(f"./{rel_dir}:/agent:rw")
+
+        # Mount .beads/ so agent can use beads issue tracker
+        beads_dir = Path.cwd() / ".beads"
+        if beads_dir.is_dir():
+            volumes.append(f"./.beads:/home/ubuntu/agora/.beads:rw")
+            service["environment"].append(f"BEADS_ACTOR={name}")
+            service["environment"].append("BD_DOLT_AUTO_PUSH=off")
+
         # Mount gh credentials so dev agents can git push
         gh_config = Path.home() / ".config" / "gh"
         if gh_config.is_dir():

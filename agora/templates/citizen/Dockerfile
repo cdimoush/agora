@@ -6,7 +6,7 @@ COPY pyproject.toml /tmp/agora-src/
 RUN pip install /tmp/agora-src/ && rm -rf /tmp/agora-src/
 
 # Install Node.js and Claude CLI
-RUN apt-get update && apt-get install -y curl && \
+RUN apt-get update && apt-get install -y curl libicu-dev && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g @anthropic-ai/claude-code && \
