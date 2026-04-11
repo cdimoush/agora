@@ -107,6 +107,7 @@ class Agora:
         Default: logs the error and returns None.
         """
         logger.error(f"on_error [{context.stage}]: {error}")
+        self.emit("lifecycle.error", stage=context.stage, error=str(error))
         return None
 
     async def on_schedule(self) -> dict[str, str] | None:
@@ -164,6 +165,7 @@ class Agora:
             content = content[: self.config.max_response_length]
             for chunk in chunk_message(content):
                 await self._last_dm_channel.send(chunk)
+            self.emit("message.sent", channel="dm", content=content, is_reply=False)
             return
 
         mode = self.config.channels.get(channel)
@@ -186,6 +188,7 @@ class Agora:
         chunks = chunk_message(content)
         for chunk in chunks:
             await discord_channel.send(chunk)
+        self.emit("message.sent", channel=channel, content=content, is_reply=False)
 
     async def reply(self, message: Message, content: str) -> None:
         """Reply to a message. Always threads. Enforces exchange cap."""
@@ -205,6 +208,8 @@ class Agora:
                 await message._msg.reply(chunk, mention_author=False)
             else:
                 await discord_channel.send(chunk)
+        self.emit("message.sent", channel=message.channel_name,
+                  content=content, is_reply=True)
 
     def _get_discord_channel(self, channel_name: str):
         """Resolve channel name to discord channel object."""
@@ -457,6 +462,17 @@ class Agora:
             with self.span("message_received", content=message.content) as s:
                 s["is_bot"] = message.is_bot
                 s["is_mention"] = message.is_mention
+
+            # Emit full message event (not truncated like span preview)
+            self.emit("message.received",
+                author=message.author_name,
+                channel=channel_name,
+                content=message.content,
+                is_dm=message.is_dm,
+                is_bot=message.is_bot,
+                is_mention=message.is_mention,
+                message_id=discord_message.id,
+            )
 
             # Step 4: Enforce mention-only mode
             with self.span("mention_filter", mode=mode) as s:
