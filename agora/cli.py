@@ -86,10 +86,13 @@ def compose_service_block(agent_dir: Path) -> dict:
 
     volumes = []
 
-    # Mount Claude credentials if available on host
-    claude_creds = Path.home() / ".claude" / ".credentials.json"
-    if claude_creds.exists():
-        volumes.append(f"{claude_creds}:/home/agent/.claude/.credentials.json:ro")
+    # Mount Claude config dir to staging path (read-only); entrypoint copies
+    # credentials into the writable /home/agent/.claude/ at startup.
+    # We mount the whole dir (not just .credentials.json) so token refreshes
+    # that create a new inode are still visible inside the container.
+    claude_dir = Path.home() / ".claude"
+    if claude_dir.is_dir():
+        volumes.append(f"{claude_dir}:/tmp/.claude-host:ro")
 
     # Mount worktree if it exists for this agent
     wt_dir = _worktrees_dir() / name
