@@ -17,9 +17,17 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# Claude Code (track skills and settings, ignore credentials)
+# Claude Code (track skills and settings, ignore runtime artifacts)
 !.claude/
 .claude/.credentials.json
+.claude/backups/
+.claude/cache/
+.claude/history.jsonl
+.claude/plugins/
+.claude/policy-limits.json
+.claude/projects/
+.claude/sessions/
+.claude.json
 
 # Beads / Dolt files (added by bd init)
 *.db
@@ -30,3 +38,8 @@ data/
 # Misc
 .perles/
 .claude/settings.local.json
+
+# Container runtime artifacts (leak through ~ mount)
+.cache/
+.local/
+.npm/

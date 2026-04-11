@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# System deps: git, gh CLI, Claude Code
-RUN apt-get update && apt-get install -y curl git && \
+# System deps: git, gh CLI, Claude Code, ICU (for beads/dolt)
+RUN apt-get update && apt-get install -y curl git libicu-dev && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g @anthropic-ai/claude-code && \
@@ -12,6 +12,16 @@ RUN apt-get update && apt-get install -y curl git && \
     apt-get update && apt-get install -y gh && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Beads CLI (embedded dolt, needs ICU 74 symlinks if container has newer ICU)
+COPY bd /usr/local/bin/bd
+RUN chmod +x /usr/local/bin/bd && \
+    ICU_VER=$(ls /usr/lib/x86_64-linux-gnu/libicuuc.so.* 2>/dev/null | head -1 | grep -oP '\d+$') && \
+    if [ -n "$ICU_VER" ] && [ "$ICU_VER" != "74" ]; then \
+      ln -sf /usr/lib/x86_64-linux-gnu/libicui18n.so.$ICU_VER /usr/lib/x86_64-linux-gnu/libicui18n.so.74 && \
+      ln -sf /usr/lib/x86_64-linux-gnu/libicuuc.so.$ICU_VER /usr/lib/x86_64-linux-gnu/libicuuc.so.74 && \
+      ln -sf /usr/lib/x86_64-linux-gnu/libicudata.so.$ICU_VER /usr/lib/x86_64-linux-gnu/libicudata.so.74; \
+    fi
+
 # Pre-install agora dependencies (editable install happens at startup from mount)
 COPY pyproject.toml /tmp/agora-src/
 COPY agora/ /tmp/agora-src/agora/
@@ -21,11 +31,9 @@ RUN pip install /tmp/agora-src/ && rm -rf /tmp/agora-src/ && pip uninstall -y ag
 RUN useradd -m -u 1000 -s /bin/bash agent
 
 # Git config
-RUN git config --global --add safe.directory /home/agent/agora && \
+RUN git config --global --add safe.directory /home/agent && \
     git config --global credential.https://github.com.helper "" && \
     git config --global credential.https://github.com.helper "!/usr/bin/gh auth git-credential"
-
-RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 
 # Entrypoint — copied in, everything else comes from mount
 COPY agent/entrypoint.sh /usr/local/bin/entrypoint.sh
