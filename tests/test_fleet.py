@@ -171,13 +171,13 @@ class TestEnsureCompose:
         assert "nova" in compose["services"]
         assert "rex" in compose["services"]
 
-    def test_preserves_existing_compose(self, tmp_path, monkeypatch):
+    def test_regenerates_existing_compose(self, tmp_path, monkeypatch):
+        """Compose is always regenerated to prevent stale config (agora-3e9)."""
         monkeypatch.chdir(tmp_path)
         compose_path = tmp_path / "docker-compose.yml"
-        compose_path.write_text("services:\n  existing: {}\n")
-        result = _ensure_compose()
-        assert result == compose_path
-        assert "existing" in result.read_text()
+        compose_path.write_text("services:\n  stale: {}\n")
+        with pytest.raises(FileNotFoundError):
+            _ensure_compose()
 
 
 class TestFleetCommands:
