@@ -223,9 +223,15 @@ class Agora:
     def span(self, name: str, **attrs):
         """Create a timed span for a pipeline step.
 
-        Returns _NullSpan (no-op) when no processors are registered.
+        Returns _NullSpan (no-op) when no span processors are registered
+        and no event collectors are active.
         """
-        if not self._processors:
+        has_span_procs = bool(self._processors)
+        has_event_sink = (
+            self._collector._data_dir is not None
+            or bool(self._collector._processors)
+        )
+        if not has_span_procs and not has_event_sink:
             yield _null_span
             return
 
@@ -251,11 +257,20 @@ class Agora:
             yield s
         finally:
             s.duration_ms = (time.monotonic() - start) * 1000
+            # Path 1: Legacy — deliver Span to TelemetryProcessors
             for proc in self._processors:
                 try:
                     proc.on_span(s)
                 except Exception:
                     pass  # never crash the pipeline for telemetry
+            # Path 2: Events — emit pipeline.step event
+            if has_event_sink:
+                self._collector.emit(
+                    "pipeline.step",
+                    step=s.name,
+                    duration_ms=round(s.duration_ms, 2),
+                    **s._attrs,
+                )
 
     def _start_trace(self, channel_name: str, discord_message) -> str:
         trace_id = uuid.uuid4().hex[:8]
