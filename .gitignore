@@ -41,3 +41,4 @@ worktrees/
 
 # Clones — per-agent full git clones (dev agent)
 clones/
+.perles/
