@@ -1,0 +1,32 @@
+# Host-only files (not copied into container)
+setup.sh
+.git
+.beads
+.dolt
+.env
+.env.*
+!.env.example
+.dockerignore
+
+# Runtime data
+data/
+logs/
+
+# Python artifacts
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Claude Code config (mounted at runtime, not baked in)
+.claude/
+
+# Docs and tests (not needed in container)
+docs/
+tests/
+examples/
+
+# Misc
+*.md
+!CLAUDE.md
+.perles/
