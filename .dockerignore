@@ -1,5 +1,5 @@
 # Host-only files (not copied into container)
-setup.sh
+agora.sh
 .git
 .beads
 .dolt

@@ -30,15 +30,21 @@ CONTAINER_NAME="agora-${BASENAME}"
 IMAGE_NAME="agora-${BASENAME}:latest"
 
 # Find the main git dir (for worktree git operations)
-MAIN_GIT_DIR="$(git rev-parse --git-common-dir 2>/dev/null || echo "$REPO_ROOT/.git")"
-MAIN_REPO="$(dirname "$MAIN_GIT_DIR")"
-if [[ "$MAIN_GIT_DIR" == *"/.git" ]]; then
-    MAIN_REPO="$(dirname "$MAIN_GIT_DIR")"
-elif [[ "$MAIN_GIT_DIR" == *"/.git/"* ]]; then
+# --git-common-dir can return a relative path, so resolve it
+MAIN_GIT_DIR="$(cd "$REPO_ROOT" && git rev-parse --git-common-dir 2>/dev/null || echo "$REPO_ROOT/.git")"
+# Make absolute if relative
+[[ "$MAIN_GIT_DIR" != /* ]] && MAIN_GIT_DIR="$REPO_ROOT/$MAIN_GIT_DIR"
+MAIN_GIT_DIR="$(cd "$MAIN_GIT_DIR" && pwd)"
+
+if [[ "$MAIN_GIT_DIR" == *"/.git/worktrees/"* ]]; then
     MAIN_REPO="$(echo "$MAIN_GIT_DIR" | sed 's|/\.git/worktrees/.*||')"
+else
+    # Strip trailing /.git
+    MAIN_REPO="$(dirname "$MAIN_GIT_DIR")"
 fi
 
 # Paths
+BD_BIN="${BD_BIN:-$(which bd 2>/dev/null || echo "$HOME/.local/bin/bd")}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 GH_CONFIG="${GH_CONFIG:-$HOME/.config/gh}"
 ENV_FILE="${SCRIPT_DIR}/agent/.env"
@@ -50,7 +56,22 @@ echo "[agora] Repo root: ${REPO_ROOT}"
 
 cmd_build() {
     echo "[agora] Building ${IMAGE_NAME}..."
+
+    # Stage the beads binary for Docker COPY
+    if [ -f "$BD_BIN" ]; then
+        cp "$BD_BIN" "${SCRIPT_DIR}/bd"
+        echo "[agora] Copied beads CLI from ${BD_BIN}"
+    else
+        echo "[agora] WARNING: beads CLI not found at ${BD_BIN}"
+        echo "[agora] Set BD_BIN=/path/to/bd or install beads first"
+        exit 1
+    fi
+
     docker build -t "${IMAGE_NAME}" "${SCRIPT_DIR}"
+
+    # Clean up staged binary
+    rm -f "${SCRIPT_DIR}/bd"
+
     echo "[agora] Built ${IMAGE_NAME}"
 }
 

@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y curl git libicu-dev && \
     apt-get update && apt-get install -y gh && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Beads CLI (compiled against ICU 74; container may have newer ICU)
+# Beads CLI — copied from host at build time by agora.sh
+# (compiled against ICU 74; container may have newer ICU)
 COPY bd /usr/local/bin/bd
 RUN chmod +x /usr/local/bin/bd && \
     ICU_VER=$(ls /usr/lib/x86_64-linux-gnu/libicuuc.so.* 2>/dev/null | head -1 | grep -oP '\d+$') && \
@@ -39,10 +40,10 @@ RUN git config --global user.name "agora-dev" && \
 
 RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 
-# Copy agent code (everything except what's in .dockerignore)
+# Copy agent code from agent/ subfolder
 WORKDIR /agent
-COPY agent.py mind.py agent.yaml CLAUDE.md ./
-COPY entrypoint.sh /agent/entrypoint.sh
+COPY agent/agent.py agent/mind.py agent/agent.yaml agent/CLAUDE.md ./
+COPY agent/entrypoint.sh /agent/entrypoint.sh
 RUN chmod +x /agent/entrypoint.sh && chown -R agent:agent /agent
 
 USER agent
