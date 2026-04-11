@@ -74,12 +74,16 @@ def compose_service_block(agent_dir: Path) -> dict:
     except ValueError:
         rel_dir = agent_dir
 
+    # Use fleet directory name for service key and container name so
+    # 'docker compose up dev' works regardless of agent.yaml name field.
+    fleet_name = agent_dir.name
+
     service = {
         "build": {
             "context": ".",
             "dockerfile": str(rel_dir / "Dockerfile"),
         },
-        "container_name": f"agora-{name}",
+        "container_name": f"agora-{fleet_name}",
         "env_file": [str(rel_dir / ".env")],
         "restart": "unless-stopped",
     }
@@ -94,19 +98,23 @@ def compose_service_block(agent_dir: Path) -> dict:
     if claude_dir.is_dir():
         volumes.append(f"{claude_dir}:/tmp/.claude-host:ro")
 
-    # Mount worktree if it exists for this agent
-    wt_dir = _worktrees_dir() / name
+    # Mount worktree if it exists for this agent (dev agent).
+    wt_dir = _worktrees_dir() / fleet_name
     if wt_dir.is_dir():
-        volumes.append(f"./worktrees/{name}:/workspace/agora:rw")
+        volumes.append(f"./worktrees/{fleet_name}:/workspace/agora:rw")
         service.setdefault("environment", []).append("AGORA_DEV_MODE=1")
 
         # Mount fleet dir so agent can self-edit (agent.py, mind.py, etc.)
         volumes.append(f"./{rel_dir}:/agent:rw")
 
+        # Mount .git so worktree git operations work (and beads can
+        # resolve the database via the git repo root)
+        volumes.append("./.git:/home/ubuntu/agora/.git:rw")
+
         # Mount .beads/ so agent can use beads issue tracker
         beads_dir = Path.cwd() / ".beads"
         if beads_dir.is_dir():
-            volumes.append(f"./.beads:/home/ubuntu/agora/.beads:rw")
+            volumes.append("./.beads:/home/ubuntu/agora/.beads:rw")
             service["environment"].append(f"BEADS_ACTOR={name}")
             service["environment"].append("BD_DOLT_AUTO_PUSH=off")
 
@@ -118,7 +126,7 @@ def compose_service_block(agent_dir: Path) -> dict:
     if volumes:
         service["volumes"] = volumes
 
-    return {name: service}
+    return {fleet_name: service}
 
 
 def _is_repo_root(path: Path | None = None) -> bool:
@@ -704,12 +712,14 @@ def _scan_fleet() -> list[Path]:
 
 
 def _ensure_compose(agents: list[Path] | None = None) -> Path:
-    """Ensure docker-compose.yml exists, regenerating from fleet/ if missing."""
+    """Generate docker-compose.yml from fleet/ agents.
+
+    Always regenerates to ensure the compose file matches the current
+    fleet layout and host configuration (mounts, credentials, etc.).
+    """
     import yaml
 
     compose_path = Path.cwd() / "docker-compose.yml"
-    if compose_path.exists():
-        return compose_path
 
     if agents is None:
         agents = _scan_fleet()
