@@ -32,6 +32,7 @@ _ERROR_LINES = [
 
 
 SESSION_TTL = 24 * 60 * 60  # 24 hours in seconds
+SESSIONS_FILE = "data/sessions.json"
 
 
 class Dev(Agora):
@@ -44,6 +45,9 @@ class Dev(Agora):
         self.mind = DevMind(self._project_dir)
         # Session store: {user_id: {"session_id": str, "last_active": float}}
         self._sessions: dict[int, dict] = {}
+        self._sessions_path = self._project_dir / SESSIONS_FILE
+        self._load_sessions()
+        self._install_restart_handler()
 
     @classmethod
     def from_config(cls, path: str) -> Dev:
@@ -240,6 +244,42 @@ class Dev(Agora):
             "session_id": session_id,
             "last_active": time.monotonic(),
         }
+        self._save_sessions()
+
+    def _load_sessions(self) -> None:
+        """Load sessions from disk (survives restart)."""
+        if not self._sessions_path.exists():
+            return
+        try:
+            data = json.loads(self._sessions_path.read_text())
+            now = time.monotonic()
+            for uid_str, entry in data.items():
+                # Restore with current monotonic base — age is approximate
+                self._sessions[int(uid_str)] = {
+                    "session_id": entry["session_id"],
+                    "last_active": now,
+                }
+            logger.info("Loaded %d sessions from disk", len(self._sessions))
+        except Exception as e:
+            logger.warning("Failed to load sessions: %s", e)
+
+    def _save_sessions(self) -> None:
+        """Persist sessions to disk."""
+        try:
+            data = {}
+            for uid, entry in self._sessions.items():
+                data[str(uid)] = {"session_id": entry["session_id"]}
+            self._sessions_path.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.warning("Failed to save sessions: %s", e)
+
+    def _install_restart_handler(self) -> None:
+        """Install SIGUSR1 handler for graceful self-restart."""
+        def _handle_restart(signum, frame):
+            logger.info("SIGUSR1 received — saving state and restarting")
+            self._save_sessions()
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        signal.signal(signal.SIGUSR1, _handle_restart)
 
     # -- Audio transcription -----------------------------------------------
 
