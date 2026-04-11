@@ -19,6 +19,7 @@ import discord
 from agora.chunker import chunk_message
 from agora.config import Config
 from agora.errors import ErrorContext
+from agora.events import Event, EventCollector, EventProcessor
 from agora.message import Message
 from agora.safety import ExchangeCapChecker
 from agora.scheduler import SchedulerTask, parse_interval
@@ -48,6 +49,10 @@ class Agora:
         self._member_map: dict[str, int] = {}
         self._mention_pattern = None  # compiled regex, built in _resolve_members
         self._processors: list = []
+        data_dir = Path(config.data_dir) if config.data_dir else None
+        self._collector = EventCollector(
+            config.name or config.token_env, data_dir
+        )
         self._ready_event = asyncio.Event()
         self._run_task = None
         self._scheduler_task = None
@@ -102,6 +107,7 @@ class Agora:
         Default: logs the error and returns None.
         """
         logger.error(f"on_error [{context.stage}]: {error}")
+        self.emit("lifecycle.error", stage=context.stage, error=str(error))
         return None
 
     async def on_schedule(self) -> dict[str, str] | None:
@@ -159,6 +165,7 @@ class Agora:
             content = content[: self.config.max_response_length]
             for chunk in chunk_message(content):
                 await self._last_dm_channel.send(chunk)
+            self.emit("message.sent", channel="dm", content=content, is_reply=False)
             return
 
         mode = self.config.channels.get(channel)
@@ -181,6 +188,7 @@ class Agora:
         chunks = chunk_message(content)
         for chunk in chunks:
             await discord_channel.send(chunk)
+        self.emit("message.sent", channel=channel, content=content, is_reply=False)
 
     async def reply(self, message: Message, content: str) -> None:
         """Reply to a message. Always threads. Enforces exchange cap."""
@@ -200,6 +208,8 @@ class Agora:
                 await message._msg.reply(chunk, mention_author=False)
             else:
                 await discord_channel.send(chunk)
+        self.emit("message.sent", channel=message.channel_name,
+                  content=content, is_reply=True)
 
     def _get_discord_channel(self, channel_name: str):
         """Resolve channel name to discord channel object."""
@@ -218,9 +228,15 @@ class Agora:
     def span(self, name: str, **attrs):
         """Create a timed span for a pipeline step.
 
-        Returns _NullSpan (no-op) when no processors are registered.
+        Returns _NullSpan (no-op) when no span processors are registered
+        and no event collectors are active.
         """
-        if not self._processors:
+        has_span_procs = bool(self._processors)
+        has_event_sink = (
+            self._collector._data_dir is not None
+            or bool(self._collector._processors)
+        )
+        if not has_span_procs and not has_event_sink:
             yield _null_span
             return
 
@@ -246,11 +262,20 @@ class Agora:
             yield s
         finally:
             s.duration_ms = (time.monotonic() - start) * 1000
+            # Path 1: Legacy — deliver Span to TelemetryProcessors
             for proc in self._processors:
                 try:
                     proc.on_span(s)
                 except Exception:
                     pass  # never crash the pipeline for telemetry
+            # Path 2: Events — emit pipeline.step event
+            if has_event_sink:
+                self._collector.emit(
+                    "pipeline.step",
+                    step=s.name,
+                    duration_ms=round(s.duration_ms, 2),
+                    **s._attrs,
+                )
 
     def _start_trace(self, channel_name: str, discord_message) -> str:
         trace_id = uuid.uuid4().hex[:8]
@@ -261,10 +286,22 @@ class Agora:
             "message_id": discord_message.id,
             "author": discord_message.author.display_name,
         })
+        self._collector._trace_id = trace_id
         return trace_id
 
     def _end_trace(self) -> None:
         _trace_ctx.set(None)
+        self._collector._trace_id = None
+
+    # ── Public: events ─────────────────────────────────────────
+
+    def emit(self, event_type: str, **payload) -> Event:
+        """Emit a telemetry event."""
+        return self._collector.emit(event_type, **payload)
+
+    def add_event_processor(self, processor: EventProcessor) -> None:
+        """Register an event processor for real-time event consumption."""
+        self._collector.add_processor(processor)
 
     # ── Public: lifecycle ─────────────────────────────────────
 
@@ -357,26 +394,30 @@ class Agora:
 
     async def _on_schedule_tick(self) -> None:
         """Called by the scheduler. Dispatches on_schedule results via send()."""
+        self._collector.start_session()
         try:
-            result = await self.on_schedule()
-        except Exception as e:
-            ctx = ErrorContext(stage="on_schedule")
             try:
-                await self.on_error(e, ctx)
-            except Exception:
-                logger.error("on_error itself raised during on_schedule — swallowing")
-            return
-
-        if not result:
-            return
-
-        for channel_name, content in result.items():
-            if not content:
-                continue
-            try:
-                await self.send(channel_name, content)
+                result = await self.on_schedule()
             except Exception as e:
-                logger.error(f"on_schedule send to '{channel_name}' failed: {e}")
+                ctx = ErrorContext(stage="on_schedule")
+                try:
+                    await self.on_error(e, ctx)
+                except Exception:
+                    logger.error("on_error itself raised during on_schedule — swallowing")
+                return
+
+            if not result:
+                return
+
+            for channel_name, content in result.items():
+                if not content:
+                    continue
+                try:
+                    await self.send(channel_name, content)
+                except Exception as e:
+                    logger.error(f"on_schedule send to '{channel_name}' failed: {e}")
+        finally:
+            self._collector.end_session()
 
     # ── Internal: discord.py event handlers ───────────────────
 
@@ -407,8 +448,9 @@ class Agora:
         if mode is None or mode == "write-only":
             return
 
-        # ── Trace starts ──
+        # ── Trace + session start ──
         self._start_trace(channel_name, discord_message)
+        self._collector.start_session()
         outcome = "filtered"
         filter_step = None
         filter_reason = None
@@ -420,6 +462,17 @@ class Agora:
             with self.span("message_received", content=message.content) as s:
                 s["is_bot"] = message.is_bot
                 s["is_mention"] = message.is_mention
+
+            # Emit full message event (not truncated like span preview)
+            self.emit("message.received",
+                author=message.author_name,
+                channel=channel_name,
+                content=message.content,
+                is_dm=message.is_dm,
+                is_bot=message.is_bot,
+                is_mention=message.is_mention,
+                message_id=discord_message.id,
+            )
 
             # Step 4: Enforce mention-only mode
             with self.span("mention_filter", mode=mode) as s:
@@ -579,6 +632,7 @@ class Agora:
                     s["filter_reason"] = filter_reason
                 elif outcome == "responded":
                     s["response_preview"] = response_preview
+            self._collector.end_session()
             self._end_trace()
 
     # ── Internal: helpers ─────────────────────────────────────

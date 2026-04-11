@@ -1,0 +1,19 @@
+# Mod configuration
+token_env: AGORA_MOD_TOKEN
+name: mod
+display_name: Mod
+respond_mode: all
+telemetry: true
+data_dir: ./data
+
+channels:
+  general: subscribe
+  bot-chat: subscribe
+  mod-log: write-only
+
+context:
+  backend: container
+
+jitter_seconds: [0.0, 0.0]
+typing_indicator: false
+reply_threading: false

@@ -37,6 +37,8 @@ class Config:
     context_runtime: str | None = None
     context_image: str | None = None
 
+    data_dir: str | None = None
+
     jitter_seconds: tuple[float, float] = (1.0, 3.0)
     typing_indicator: bool = True
     reply_threading: bool = True
