@@ -13,11 +13,13 @@ import os
 import random
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 from agora import Agora, Message
 from agora.errors import ErrorContext
+from agora.voice import TranscriptionError, is_audio_file, transcribe
 from mind import DevMind
 
 logger = logging.getLogger("agora.dev")
@@ -56,6 +58,9 @@ class Dev(Agora):
         """Dev mode: full Claude CLI with dev tooling."""
         logger.info("DM from %s: %s", message.author_name, message.content[:100])
 
+        # Transcribe any audio attachments
+        content = await self._content_with_transcriptions(message)
+
         journal_entries = self.mind.read_journal()
 
         # Gather dev context
@@ -64,7 +69,7 @@ class Dev(Agora):
         bd_ready = await self._run_cmd("bd ready", cwd=self._workspace)
 
         prompt = self.mind.build_dev_prompt(
-            operator_message=message.content,
+            operator_message=content,
             git_branch=git_branch or "unknown",
             git_status=git_status or "(clean)",
             bd_ready=bd_ready or "(no issues ready)",
@@ -77,7 +82,7 @@ class Dev(Agora):
             await self._write_journal_entry(
                 trigger="dm",
                 channel="dm",
-                event_summary=f"Operator asked: {message.content[:80]}. I responded: {response[:80]}",
+                event_summary=f"Operator asked: {content[:80]}. I responded: {response[:80]}",
                 spoke=True,
             )
 
@@ -88,6 +93,9 @@ class Dev(Agora):
         logger.info(
             "on_message from %s in #%s", message.author_name, message.channel_name
         )
+
+        # Transcribe any audio attachments
+        content = await self._content_with_transcriptions(message)
 
         history = await self.get_history(message.channel_name, limit=10)
         history_lines = []
@@ -103,7 +111,7 @@ class Dev(Agora):
 
         prompt = self.mind.build_reactive_prompt(
             author_name=message.author_name,
-            message_content=message.content,
+            message_content=content,
             channel_name=message.channel_name,
             history_lines=history_lines,
             roster=roster,
@@ -116,7 +124,7 @@ class Dev(Agora):
             await self._write_journal_entry(
                 trigger="reactive",
                 channel=message.channel_name,
-                event_summary=f"In #{message.channel_name}, {message.author_name} said: {message.content[:100]}. I replied: {response[:100]}",
+                event_summary=f"In #{message.channel_name}, {message.author_name} said: {content[:100]}. I replied: {response[:100]}",
                 spoke=True,
             )
 
@@ -176,6 +184,57 @@ class Dev(Agora):
         """Fail gracefully."""
         logger.error("Dev error [%s]: %s", context.stage, error)
         return random.choice(_ERROR_LINES)
+
+    # -- Audio transcription -----------------------------------------------
+
+    async def _content_with_transcriptions(self, message: Message) -> str:
+        """Return message content with audio attachments transcribed to text.
+
+        If the message has audio attachments, each is downloaded, transcribed
+        via the Whisper API, and the transcript is appended to the text content.
+        Non-audio attachments are ignored. If transcription fails (e.g. no API
+        key), a note is included instead of the transcript.
+        """
+        audio_attachments = [
+            a for a in message.attachments if is_audio_file(a.filename)
+        ]
+        if not audio_attachments:
+            return message.content
+
+        parts = []
+        if message.content:
+            parts.append(message.content)
+
+        for attachment in audio_attachments:
+            suffix = Path(attachment.filename).suffix or ".ogg"
+            tmp = None
+            try:
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=suffix, prefix="agora-voice-", delete=False,
+                )
+                tmp.close()
+                await attachment.save(tmp.name)
+                text = await transcribe(tmp.name)
+                logger.info(
+                    "Transcribed %s: %d chars", attachment.filename, len(text),
+                )
+                parts.append(f"[Voice message transcript: {text}]")
+            except TranscriptionError as e:
+                logger.warning(
+                    "Transcription failed for %s: %s", attachment.filename, e,
+                )
+                parts.append(
+                    f"[Audio file received: {attachment.filename} — "
+                    f"transcription unavailable: {e}]"
+                )
+            finally:
+                if tmp is not None:
+                    try:
+                        os.unlink(tmp.name)
+                    except OSError:
+                        pass
+
+        return "\n".join(parts)
 
     # -- Claude CLI -------------------------------------------------------
 

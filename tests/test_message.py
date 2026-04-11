@@ -1,10 +1,19 @@
 """Tests for agora.message — Message wrapper over discord.Message."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
-from agora.message import Message
+from agora.message import Attachment, Message
+
+
+def _make_discord_attachment(*, filename="file.txt", url="https://cdn/file.txt",
+                              content_type="text/plain", size=1024):
+    return SimpleNamespace(
+        filename=filename, url=url, content_type=content_type, size=size,
+        save=AsyncMock(),
+    )
 
 
 def _make_discord_msg(
@@ -18,6 +27,7 @@ def _make_discord_msg(
     msg_id=333,
     mentions=None,
     reference_message_id=None,
+    attachments=None,
 ):
     author = SimpleNamespace(
         display_name=author_name, id=author_id, bot=author_bot
@@ -33,6 +43,7 @@ def _make_discord_msg(
         id=msg_id,
         mentions=mentions or [],
         reference=ref,
+        attachments=attachments or [],
     )
 
 
@@ -108,6 +119,40 @@ class TestIsAgent:
         dm = _make_discord_msg(author_bot=False)
         msg = Message(dm, BOT_USER_ID)
         assert msg.is_agent is False
+
+
+class TestAttachments:
+    def test_no_attachments(self):
+        msg = Message(_make_discord_msg(), BOT_USER_ID)
+        assert msg.attachments == []
+
+    def test_single_attachment(self):
+        da = _make_discord_attachment(filename="voice.ogg", size=5000)
+        msg = Message(_make_discord_msg(attachments=[da]), BOT_USER_ID)
+        atts = msg.attachments
+        assert len(atts) == 1
+        assert atts[0].filename == "voice.ogg"
+        assert atts[0].size == 5000
+
+    def test_multiple_attachments(self):
+        a1 = _make_discord_attachment(filename="voice.ogg")
+        a2 = _make_discord_attachment(filename="image.png")
+        msg = Message(_make_discord_msg(attachments=[a1, a2]), BOT_USER_ID)
+        assert len(msg.attachments) == 2
+
+    def test_attachment_repr(self):
+        da = _make_discord_attachment(filename="test.mp3", size=2048)
+        att = Attachment(da)
+        assert repr(att) == "Attachment('test.mp3', 2048 bytes)"
+
+    @pytest.mark.asyncio
+    async def test_attachment_save(self, tmp_path):
+        da = _make_discord_attachment(filename="voice.ogg")
+        att = Attachment(da)
+        dest = tmp_path / "saved.ogg"
+        result = await att.save(dest)
+        da.save.assert_awaited_once_with(dest)
+        assert result == dest
 
 
 class TestEdgeCases:
