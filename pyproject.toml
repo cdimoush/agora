@@ -13,9 +13,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-voice = [
-    "openai>=1.0",
-]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

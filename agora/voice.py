@@ -1,13 +1,16 @@
 """Audio transcription for Agora agents.
 
-Transcribes audio files using the OpenAI Whisper API. Modeled after
-the voice module in cdimoush/relay and cdimoush/vox.
+Transcribes audio files using the Vox CLI (github.com/cdimoush/vox),
+which wraps the OpenAI Whisper API with automatic chunking for long files.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
+import shutil
 from pathlib import Path
 
 logger = logging.getLogger("agora.voice")
@@ -25,52 +28,77 @@ def is_audio_file(filename: str) -> bool:
 
 
 async def transcribe(audio_path: str | Path, api_key: str | None = None) -> str:
-    """Transcribe an audio file using OpenAI Whisper API.
+    """Transcribe an audio file using the Vox CLI.
 
     Args:
         audio_path: Path to the audio file (.ogg, .wav, .mp3, etc.)
         api_key: OpenAI API key. Falls back to OPENAI_API_KEY env var.
+                 Passed to vox via environment.
 
     Returns:
         Transcribed text.
 
     Raises:
-        TranscriptionError: On missing API key, API errors, or empty results.
+        TranscriptionError: On missing vox binary, API errors, or empty results.
     """
-    try:
-        import openai
-    except ImportError:
+    if shutil.which("vox") is None:
         raise TranscriptionError(
-            "openai package not installed — run: pip install openai"
-        )
-
-    if api_key is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise TranscriptionError(
-            "No OpenAI API key — set OPENAI_API_KEY or pass api_key"
+            "vox CLI not installed — see https://github.com/cdimoush/vox"
         )
 
     audio_path = Path(audio_path)
     if not audio_path.exists():
         raise TranscriptionError(f"Audio file not found: {audio_path}")
 
-    client = openai.AsyncOpenAI(api_key=api_key)
+    env = os.environ.copy()
+    if api_key:
+        env["OPENAI_API_KEY"] = api_key
+
+    if not env.get("OPENAI_API_KEY"):
+        raise TranscriptionError(
+            "No OpenAI API key — set OPENAI_API_KEY or pass api_key"
+        )
+
+    proc = await asyncio.create_subprocess_exec(
+        "vox", "file", str(audio_path), "--json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
 
     try:
-        with open(audio_path, "rb") as f:
-            response = await client.audio.transcriptions.create(
-                model="gpt-4o-mini-transcribe",
-                file=f,
-            )
-        text = response.text.strip()
-        if not text:
-            raise TranscriptionError("Transcription returned empty text")
-        logger.info("Transcribed %s (%d chars)", audio_path.name, len(text))
-        return text
-    except TranscriptionError:
-        raise
-    except openai.APIError as e:
-        raise TranscriptionError(f"OpenAI API error: {e}") from e
-    except Exception as e:
-        raise TranscriptionError(f"Transcription failed: {e}") from e
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise TranscriptionError("Vox transcription timed out")
+
+    if proc.returncode == 3:
+        raise TranscriptionError(
+            "No OpenAI API key — set OPENAI_API_KEY or pass api_key"
+        )
+    if proc.returncode == 2:
+        raise TranscriptionError(
+            f"Vox API error: {stderr.decode().strip()}"
+        )
+    if proc.returncode != 0:
+        raise TranscriptionError(
+            f"Vox failed (exit {proc.returncode}): {stderr.decode().strip()}"
+        )
+
+    raw = stdout.decode().strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        # Non-JSON output — treat raw stdout as the transcript text
+        text = raw
+    else:
+        if data.get("error"):
+            raise TranscriptionError(f"Vox error: {data['error']}")
+        text = data.get("text", "").strip()
+
+    if not text:
+        raise TranscriptionError("Transcription returned empty text")
+
+    logger.info("Transcribed %s (%d chars)", audio_path.name, len(text))
+    return text

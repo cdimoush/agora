@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# System deps: git, gh CLI, Claude Code, ICU (for beads/dolt)
-RUN apt-get update && apt-get install -y curl git libicu-dev && \
+# System deps: git, gh CLI, Claude Code, ICU (for beads/dolt), sox (for vox chunking)
+RUN apt-get update && apt-get install -y curl git libicu-dev sox && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g @anthropic-ai/claude-code && \
@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y curl git libicu-dev && \
       > /etc/apt/sources.list.d/github-cli.list && \
     apt-get update && apt-get install -y gh && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Vox CLI — audio transcription via OpenAI Whisper
+RUN curl -fsSL https://i.jpillora.com/cdimoush/vox! | bash
 
 # Beads CLI (embedded dolt, needs ICU 74 symlinks if container has newer ICU)
 COPY bd /usr/local/bin/bd
