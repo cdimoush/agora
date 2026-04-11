@@ -111,6 +111,16 @@ class DevMind:
             "create branches, and track issues with beads (bd CLI). "
             "Respond with what you'll do and the results. Be thorough but concise."
         )
+        parts.append("")
+        parts.append(
+            "## Multi-channel messaging\n"
+            "You can send messages to other channels while responding to a DM. "
+            "Add a directive line at the END of your response:\n"
+            "  [send:channel-name] Your message here\n"
+            "The directive line will be stripped from the DM reply and sent to "
+            "that channel. You can include multiple directives for multiple channels. "
+            "Only use this when the operator asks you to talk in another channel."
+        )
 
         return "\n".join(parts)
 
@@ -230,6 +240,30 @@ class DevMind:
             "observation": observation,
             "spoke": spoke,
         }
+
+    def parse_channel_directives(self, response: str) -> tuple[str, list[dict[str, str]]]:
+        """Extract [send:channel] directives from a DM response.
+
+        Returns (cleaned_response, directives) where directives is a list of
+        {"channel": name, "message": text} dicts.
+
+        Format: [send:channel-name] message text here
+        Each directive must be on its own line.
+        """
+        import re
+
+        directives: list[dict[str, str]] = []
+        clean_lines: list[str] = []
+
+        for line in response.splitlines():
+            m = re.match(r'^\[send:([a-zA-Z0-9_-]+)\]\s*(.+)$', line.strip())
+            if m:
+                directives.append({"channel": m.group(1), "message": m.group(2)})
+            else:
+                clean_lines.append(line)
+
+        cleaned = "\n".join(clean_lines).strip()
+        return cleaned, directives
 
     def parse_scan_response(self, raw: str) -> dict[str, str] | None:
         """Parse Claude's scan response into {channel: message} or None."""
