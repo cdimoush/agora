@@ -6,10 +6,7 @@
 
 # Secrets
 .env
-.env.*
-
-# Testbed secrets (tokens are per-bot, never committed)
-testbed/*/.env
+!.env.example
 
 # Telemetry logs
 logs/
@@ -22,23 +19,12 @@ __pycache__/
 
 # Claude Code
 .claude/
-# But keep testbed citizen configs
-!testbed/citizen-a/.claude/
-!testbed/citizen-b/.claude/
 
 # Beads / Dolt files (added by bd init)
 *.db
 
-# Fleet — agent instances (generated, not tracked)
-fleet/
+# Agent runtime data
+data/
 
-# Docker compose — derived from fleet/ contents
-docker-compose.yml
-docker-compose.override.yml
-
-# Worktrees — per-agent agora copies (Phase 2)
-worktrees/
-
-# Clones — per-agent full git clones (dev agent)
-clones/
+# Misc
 .perles/

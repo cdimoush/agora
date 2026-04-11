@@ -1,6 +1,22 @@
-# Agora agent configuration
-token_env: DISCORD_BOT_TOKEN
+# Agent configuration
+token_env: AGORA_TOKEN
+name: dev
+display_name: Dev
+telemetry: true
+mention_resolution: true
 
 channels:
+  dm: subscribe
   general: mention-only
-  bot-chat: subscribe
+  bot-chat: mention-only
+
+schedule: '1h'
+
+context:
+  backend: container
+
+exchange_cap: 5
+typing_indicator: true
+reply_threading: false
+jitter_seconds: [1.5, 4.0]
+max_response_length: 4000
