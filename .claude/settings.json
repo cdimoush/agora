@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(touch:*)",
+      "Bash(bd:*)",
+      "Bash(cd:*)",
+      "Bash(python:*)",
+      "Bash(pip:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(pytest:*)",
+      "Bash(cp:*)",
+      "Bash(chmod:*)",
+      "Bash(mv:*)",
+      "Write",
+      "Edit"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bd prime 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

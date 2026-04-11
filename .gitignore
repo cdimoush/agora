@@ -17,8 +17,9 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# Claude Code
-.claude/
+# Claude Code (track skills and settings, ignore credentials)
+!.claude/
+.claude/.credentials.json
 
 # Beads / Dolt files (added by bd init)
 *.db
@@ -28,3 +29,4 @@ data/
 
 # Misc
 .perles/
+.claude/settings.local.json
