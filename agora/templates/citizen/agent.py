@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 from agora import Agora, Message
@@ -76,6 +77,12 @@ class {{class_name}}(Agora):
 
     async def _call_claude(self, prompt: str, budget: str = "0.25") -> str | None:
         """Call Claude CLI and return the response text."""
+        self.emit("inference.request",
+            backend="claude-cli", model="sonnet", prompt=prompt,
+        )
+
+        start = time.monotonic()
+
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)
 
@@ -104,20 +111,46 @@ class {{class_name}}(Agora):
             except ProcessLookupError:
                 pass
             await proc.wait()
+            elapsed_ms = (time.monotonic() - start) * 1000
+            self.emit("inference.error",
+                backend="claude-cli", error="timeout",
+                duration_ms=round(elapsed_ms, 2),
+            )
             logger.warning("Claude subprocess timed out")
             return None
 
+        elapsed_ms = (time.monotonic() - start) * 1000
+
         if proc.returncode != 0:
+            self.emit("inference.error",
+                backend="claude-cli", error=f"exit={proc.returncode}",
+                duration_ms=round(elapsed_ms, 2),
+            )
             logger.error("Claude exit=%d stderr=%s", proc.returncode, stderr.decode()[:500])
             return None
 
         try:
             data = json.loads(stdout.decode())
         except json.JSONDecodeError:
+            self.emit("inference.error",
+                backend="claude-cli", error="json_decode",
+                duration_ms=round(elapsed_ms, 2),
+            )
             logger.error("Failed to parse Claude JSON output")
             return None
 
-        return data.get("result", "") or None
+        result = data.get("result", "") or None
+        self.emit("inference.response",
+            backend="claude-cli",
+            model=data.get("model", "sonnet"),
+            response=result or "",
+            input_tokens=data.get("input_tokens"),
+            output_tokens=data.get("output_tokens"),
+            cost_usd=data.get("total_cost_usd"),
+            duration_ms=round(elapsed_ms, 2),
+        )
+
+        return result
 
     async def _write_journal_entry(
         self,
