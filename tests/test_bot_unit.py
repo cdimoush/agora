@@ -31,8 +31,9 @@ def _history_messages(messages):
 
 def _make_history_msg(*, bot=False):
     """Create a minimal message for channel history mocking."""
+    from datetime import datetime, timezone
     author = SimpleNamespace(bot=bot, display_name="Bot" if bot else "Human")
-    return SimpleNamespace(author=author)
+    return SimpleNamespace(author=author, created_at=datetime.now(timezone.utc))
 
 
 def _make_config(**overrides) -> Config:
