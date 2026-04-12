@@ -43,7 +43,10 @@ class Agora:
         intents.members = config.mention_resolution
         self._client = discord.Client(intents=intents)
 
-        self._exchange_cap = ExchangeCapChecker(config.exchange_cap)
+        self._exchange_cap = ExchangeCapChecker(
+            config.exchange_cap,
+            window_minutes=config.exchange_cap_window_minutes,
+        )
         self._channel_map: dict[str, str] = {}
         self._channel_ids: dict[str, int] = {}
         self._member_map: dict[str, int] = {}

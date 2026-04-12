@@ -31,6 +31,7 @@ class Config:
     mention_aliases: dict[str, str] = field(default_factory=dict)
 
     exchange_cap: int = 5
+    exchange_cap_window_minutes: int = 60
     schedule: str | None = None
 
     context_backend: str | None = None
