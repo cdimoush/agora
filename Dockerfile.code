@@ -1,0 +1,21 @@
+# Dockerfile.code — sealed environment where the project lives.
+#
+# The agent never lives here. It enters via `docker exec` (the airlock).
+# This image holds project tooling only: python, pytest, build-essential.
+# No agent runtime. No host secrets. No internet at runtime (--network none).
+
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        build-essential \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir pytest
+
+WORKDIR /workspace
+
+# Keep the container alive so the launcher can `docker exec` into it.
+CMD ["tail", "-f", "/dev/null"]

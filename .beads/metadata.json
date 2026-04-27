@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "airlock_toy",
+  "project_id": "0089028e-1ca3-41af-b9c9-43fe353a1689"
+}

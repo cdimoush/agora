@@ -1,0 +1,24 @@
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Local env / logs
+.env
+*.log
+.DS_Store
+
+# Worktrees this toy creates next to the project
+../airlock-*/
+
+# broken_calc is a nested git repo for the toy demo
+examples/broken_calc/.git/

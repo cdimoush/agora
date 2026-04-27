@@ -1,0 +1,30 @@
+# Dockerfile.agent — where Claude Code runs.
+#
+# This container holds the agent runtime (Claude Code), the model API key
+# (injected via --env at run time), and a tiny `broker_client.sh` helper.
+# It also has the `docker` CLI so it can `docker exec` into the code
+# container — that exec is the airlock.
+#
+# Security note (toy only): we mount the host's docker socket into this
+# container so the agent can perform `docker exec`. That mount technically
+# gives the agent host-equivalent privileges (it could `docker run` other
+# images). For v1 this gets replaced with a narrow `code_exec` broker call.
+
+FROM node:20-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        docker.io \
+        netcat-openbsd \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @anthropic-ai/claude-code
+
+COPY broker_client.sh /usr/local/bin/broker_client.sh
+RUN chmod +x /usr/local/bin/broker_client.sh
+
+# Keep the container alive when started detached; the launcher will
+# `docker exec` into it to run claude.
+CMD ["tail", "-f", "/dev/null"]
